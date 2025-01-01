@@ -77,6 +77,9 @@ export default function RootLayout({
       // Suppress hydration errors due to next-themes behavior
       suppressHydrationWarning
     >
+      <head>
+        <script defer src="https://analytics.injoon5.com/script.js" data-website-id="8f53c803-0be0-4b1d-adc7-56540c92f097"></script>
+      </head>
       <body className={ibmPlexMono.variable}>
         <AppStateProvider>
           <SwrConfigClient>
