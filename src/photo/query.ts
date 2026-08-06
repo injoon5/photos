@@ -32,6 +32,7 @@ import { Lenses, createLensKey } from '@/lens';
 import {
   UPDATE_QUERY_LIMIT,
   OUTDATED_UPDATE_AT_THRESHOLD,
+  BLUR_DATA_OVERSIZED_THRESHOLD,
 } from '@/photo/update';
 import { Recipes } from '@/recipe';
 import { Years } from '@/year';
@@ -718,4 +719,51 @@ export const updateColorDataForPhoto = (
       WHERE id=${photoId}
     `,
     'updateColorDataForPhoto',
+  );
+
+// Photos stored before blur placeholders were slimmed down retain
+// large blur data, which is inlined into every page rendering them
+export const getPhotosWithOversizedBlurDataCount = () =>
+  safelyQuery(
+    () => sql`
+      SELECT COUNT(*) FROM photos
+      WHERE LENGTH(blur_data) > ${BLUR_DATA_OVERSIZED_THRESHOLD}
+    `.then(({ rows }) => parseInt(rows[0].count, 10)),
+    'getPhotosWithOversizedBlurDataCount',
+  );
+
+// Offset skips over photos a caller has already failed to slim down,
+// so they don't occupy every subsequent batch
+export const getPhotosWithOversizedBlurData = (
+  limit: number,
+  offset = 0,
+) =>
+  safelyQuery(() => sql<{
+    id: string,
+    url: string,
+    blur_data_length: number,
+  }>`
+    SELECT id, url, LENGTH(blur_data) AS blur_data_length FROM photos
+    WHERE LENGTH(blur_data) > ${BLUR_DATA_OVERSIZED_THRESHOLD}
+    ORDER BY created_at DESC
+    LIMIT ${limit} OFFSET ${offset}
+  `.then(({ rows }) => rows.map(({ id, url, blur_data_length }) =>
+        ({ id, url, blurDataLength: Number(blur_data_length) })))
+  , 'getPhotosWithOversizedBlurData');
+
+// Guarded so a caller can never blank out or inflate existing blur data,
+// no matter what it passes in
+export const updateBlurDataForPhotoIfSmaller = (
+  photoId: string,
+  blurData: string,
+) =>
+  safelyQuery(
+    () => sql`
+      UPDATE photos SET
+      blur_data=${blurData}
+      WHERE id=${photoId}
+      AND ${blurData} <> ''
+      AND LENGTH(${blurData}) < LENGTH(blur_data)
+    `.then(({ rowCount }) => (rowCount ?? 0) > 0),
+    'updateBlurDataForPhotoIfSmaller',
   );
