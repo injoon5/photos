@@ -19,9 +19,14 @@ export const UPDATE_QUERY_LIMIT = 1000;
 // those generated before carry EXIF/ICC data and exceed 14K
 export const BLUR_DATA_OVERSIZED_THRESHOLD = 4000;
 
-// Each photo requires downloading its full-size original, so
-// backfills run in batches to stay within route duration limits
-export const BLUR_BACKFILL_BATCH_SIZE = 10;
+// Each photo requires downloading its full-size original, which for
+// large files can take several seconds, so batches are kept well
+// inside the 60 second admin route duration limit
+export const BLUR_BACKFILL_BATCH_SIZE = 3;
+
+// A batch which times out still commits the photos it finished, so
+// callers retry rather than abandoning the remaining work
+export const BLUR_BACKFILL_MAX_RETRIES = 3;
 
 // UTC 2025-09-7 23:55:00
 export const OUTDATED_UPDATE_AT_THRESHOLD =

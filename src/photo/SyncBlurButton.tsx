@@ -7,7 +7,10 @@ import {
   getOversizedBlurDataCountAction,
   regenerateOversizedBlurDataAction,
 } from './actions';
-import { BLUR_BACKFILL_BATCH_SIZE } from './update';
+import {
+  BLUR_BACKFILL_BATCH_SIZE,
+  BLUR_BACKFILL_MAX_RETRIES,
+} from './update';
 
 export default function SyncBlurButton() {
   const [photosRemaining, setPhotosRemaining] = useState<number>();
@@ -25,16 +28,31 @@ export default function SyncBlurButton() {
       let offset = 0;
       let remaining = photosRemaining ?? 0;
       // Every batch either slims photos or skips past ones it can't,
-      // so this is only a backstop against an unforeseen stall
-      let batchesLeft = Math.ceil(remaining / BLUR_BACKFILL_BATCH_SIZE) + 1;
+      // so this is only a backstop against an unforeseen stall. It
+      // allows for a batch failing and being retried throughout.
+      let batchesLeft =
+        (Math.ceil(remaining / BLUR_BACKFILL_BATCH_SIZE) + 1) * 2;
+
+      let retriesLeft = BLUR_BACKFILL_MAX_RETRIES;
 
       while (remaining > offset && batchesLeft > 0) {
         batchesLeft--;
-        const result = await regenerateOversizedBlurDataAction(offset);
-        // Photos which can't be slimmed stay in the set, so skip past
-        // them rather than retrying them in every subsequent batch
-        offset = result.skipOffset;
-        remaining = result.remaining;
+        try {
+          const result = await regenerateOversizedBlurDataAction(offset);
+          // Photos which can't be slimmed stay in the set, so skip past
+          // them rather than retrying them in every subsequent batch
+          offset = result.skipOffset;
+          remaining = result.remaining;
+          retriesLeft = BLUR_BACKFILL_MAX_RETRIES;
+        } catch (e) {
+          // A batch which exceeds the route's duration limit still
+          // commits the photos it got through, so pick up where it
+          // left off instead of abandoning the rest. Only consecutive
+          // failures, which suggest a stall rather than a slow batch,
+          // give up.
+          if (retriesLeft-- <= 0) { throw e; }
+          remaining = await getOversizedBlurDataCountAction();
+        }
         setPhotosRemaining(remaining);
       }
     } finally {
