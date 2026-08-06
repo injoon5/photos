@@ -15,7 +15,14 @@ import {
   updateColorDataForPhoto,
   getColorDataForPhotos,
   getPhotoIds,
+  getPhotosWithOversizedBlurData,
+  getPhotosWithOversizedBlurDataCount,
+  updateBlurDataForPhotoIfSmaller,
 } from '@/photo/query';
+import {
+  BLUR_BACKFILL_BATCH_SIZE,
+  BLUR_DATA_OVERSIZED_THRESHOLD,
+} from '@/photo/update';
 import {
   PhotoQueryOptions,
   areOptionsSensitive,
@@ -471,6 +478,72 @@ export const recalculateColorDataForAllPhotosAction = async () =>
         );
       }
     }
+  });
+
+export const getOversizedBlurDataCountAction = async () =>
+  runAuthenticatedAdminServerAction(getPhotosWithOversizedBlurDataCount);
+
+// Only data which is well-formed, and smaller than both the threshold
+// and what's already stored, is safe to write: anything else would
+// either corrupt the placeholder or leave the photo in the oversized
+// set forever, re-downloaded on every subsequent batch
+const isBlurDataSafeToStore = (
+  blurData: string,
+  existingLength: number,
+) =>
+  blurData.startsWith('data:image/') &&
+  blurData.includes(';base64,') &&
+  blurData.length > 'data:image/jpeg;base64,'.length &&
+  blurData.length <= BLUR_DATA_OVERSIZED_THRESHOLD &&
+  blurData.length < existingLength;
+
+// Regenerates a single batch and reports what's left so callers can
+// resume, since each photo requires downloading its full-size original
+export const regenerateOversizedBlurDataAction = async (
+  skipOffset = 0,
+) =>
+  runAuthenticatedAdminServerAction(async () => {
+    const offset = Math.max(0, Math.floor(skipOffset));
+
+    if (!BLUR_ENABLED) {
+      return { updated: 0, skipped: 0, remaining: 0, skipOffset: offset };
+    }
+
+    const photos = await getPhotosWithOversizedBlurData(
+      BLUR_BACKFILL_BATCH_SIZE,
+      offset,
+    );
+
+    let updated = 0;
+    let skipped = 0;
+
+    for (const { id, url, blurDataLength } of photos) {
+      try {
+        // Resolves to an empty string rather than throwing on failure
+        const blurData = await blurImageFromUrl(url);
+        if (
+          isBlurDataSafeToStore(blurData, blurDataLength) &&
+          await updateBlurDataForPhotoIfSmaller(id, blurData)
+        ) {
+          updated++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        // Leave this photo untouched and keep the batch going
+        console.log(`Error regenerating blur data for photo ${id}`, e);
+        skipped++;
+      }
+    }
+
+    if (updated > 0) { revalidateAllKeysAndPaths(); }
+
+    return {
+      updated,
+      skipped,
+      remaining: await getPhotosWithOversizedBlurDataCount(),
+      skipOffset: offset + skipped,
+    };
   });
 
 export const deletePhotoRecipeGloballyAction = async (formData: FormData) =>

@@ -15,6 +15,14 @@ export interface PhotoUpdateStatus {
 
 export const UPDATE_QUERY_LIMIT = 1000;
 
+// Slimmed-down placeholders measure well under 2K characters, while
+// those generated before carry EXIF/ICC data and exceed 14K
+export const BLUR_DATA_OVERSIZED_THRESHOLD = 4000;
+
+// Each photo requires downloading its full-size original, so
+// backfills run in batches to stay within route duration limits
+export const BLUR_BACKFILL_BATCH_SIZE = 10;
+
 // UTC 2025-09-7 23:55:00
 export const OUTDATED_UPDATE_AT_THRESHOLD =
   new Date(Date.UTC(2025, 8, 7, 23, 55, 0));

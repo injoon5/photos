@@ -35,7 +35,13 @@ import { getColorFieldsForPhotoForm } from './color/server';
 import exifr from 'exifr';
 import { getCompatibleExifValue } from '@/utility/exif';
 
-const IMAGE_WIDTH_BLUR = 200;
+// Blur placeholders are upscaled and blurred again in CSS,
+// so they're stored much smaller than they're displayed
+const IMAGE_WIDTH_BLUR = 96;
+const IMAGE_QUALITY_BLUR = 60;
+// Scaled from the blur previously applied at 200px
+// in order to preserve placeholder appearance
+const IMAGE_BLUR_SIGMA = 1.9;
 const IMAGE_WIDTH_DEFAULT = 200;
 const IMAGE_QUALITY_DEFAULT = 80;
 
@@ -157,12 +163,20 @@ export const extractImageDataFromBlobPath = async (
 const generateBase64 = async (
   image: ArrayBuffer,
   middleware?: (sharp: Sharp) => Sharp,
-) => 
-  (middleware ? middleware(sharp(image)) : sharp(image))
-    .withMetadata()
-    .toFormat('jpeg', { quality: IMAGE_QUALITY_DEFAULT })
+  {
+    preserveMetadata = true,
+    quality = IMAGE_QUALITY_DEFAULT,
+  }: {
+    preserveMetadata?: boolean
+    quality?: number
+  } = {},
+) => {
+  const pipeline = middleware ? middleware(sharp(image)) : sharp(image);
+  return (preserveMetadata ? pipeline.withMetadata() : pipeline)
+    .toFormat('jpeg', { quality })
     .toBuffer()
     .then(data => `data:image/jpeg;base64,${data.toString('base64')}`);
+};
 
 const resizeImage = async (
   image: ArrayBuffer,
@@ -172,12 +186,20 @@ const resizeImage = async (
     .resize(width),
   );
 
-const blurImage = async (image: ArrayBuffer) => 
+// Metadata is omitted because EXIF/ICC data can be several times
+// larger than the placeholder itself, which is inlined into every
+// page that renders the photo
+const blurImage = async (image: ArrayBuffer) =>
   generateBase64(image, sharp => sharp
+    // Bake orientation into pixels since EXIF is dropped below
+    .rotate()
     .resize(IMAGE_WIDTH_BLUR)
     .modulate({ saturation: 1.15 })
-    .blur(4),
-  );
+    .blur(IMAGE_BLUR_SIGMA),
+  {
+    preserveMetadata: false,
+    quality: IMAGE_QUALITY_BLUR,
+  });
 
 export const getImageBase64FromUrl = async (url: string) => 
   fetch(decodeURIComponent(url))
