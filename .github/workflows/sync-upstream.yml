@@ -1,0 +1,96 @@
+# Opens a pull request whenever sambecker/exif-photo-blog has new commits.
+# Vercel builds a preview for the PR, so review it there and merge.
+#
+# Requires: Settings → Actions → General → Workflow permissions →
+# "Allow GitHub Actions to create and approve pull requests"
+
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '23 3 * * 1' # Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: sync-upstream
+
+env:
+  UPSTREAM_REPO: sambecker/exif-photo-blog
+  UPSTREAM_BRANCH: main
+  SYNC_BRANCH: sync/upstream
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BASE: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream
+        id: merge
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags "https://github.com/$UPSTREAM_REPO.git" "$UPSTREAM_BRANCH"
+          UPSTREAM_SHA=$(git rev-parse FETCH_HEAD)
+
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            echo "Already up to date with $UPSTREAM_REPO"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          # Build on an open sync PR's branch so conflict
+          # resolutions already pushed there are kept
+          PR=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number')
+          if [ -n "$PR" ]; then
+            git checkout -B "$SYNC_BRANCH" "origin/$SYNC_BRANCH"
+            if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+              echo "Open PR #$PR already has these changes"
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            git checkout -B "$SYNC_BRANCH"
+          fi
+
+          if git merge --no-edit -m "Merge $UPSTREAM_REPO@${UPSTREAM_SHA:0:7}" "$UPSTREAM_SHA"; then
+            echo "conflicts=" >> "$GITHUB_OUTPUT"
+          else
+            CONFLICTS=$(git diff --name-only --diff-filter=U | sed 's/.*/- `&`/')
+            git merge --abort
+            # Push upstream as-is so the PR shows the conflicts,
+            # resolvable on GitHub or locally
+            if [ -z "$PR" ]; then git reset --hard "$UPSTREAM_SHA"; fi
+            { echo 'conflicts<<EOF'; echo "$CONFLICTS"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+          fi
+
+          git push --force-with-lease origin "$SYNC_BRANCH"
+          echo "pr=$PR" >> "$GITHUB_OUTPUT"
+          echo "sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        if: steps.merge.outputs.changed == 'true'
+        env:
+          PR: ${{ steps.merge.outputs.pr }}
+          SHA: ${{ steps.merge.outputs.sha }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          BODY="Merges [\`$UPSTREAM_REPO@${SHA:0:7}\`](https://github.com/$UPSTREAM_REPO/compare/$(git merge-base "origin/$BASE" "$SHA")...$SHA)."
+          if [ -n "$CONFLICTS" ]; then
+            BODY="$BODY"$'\n\n'"Conflicts with this fork's changes (see \`CUSTOMIZATIONS.md\`):"$'\n'"$CONFLICTS"
+          fi
+          if [ -n "$PR" ]; then
+            gh pr edit "$PR" --body "$BODY"
+          else
+            gh pr create --base "$BASE" --head "$SYNC_BRANCH" \
+              --title "Sync with $UPSTREAM_REPO" --body "$BODY"
+          fi
