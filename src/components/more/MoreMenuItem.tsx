@@ -11,12 +11,38 @@ import LoaderButton from '../primitives/LoaderButton';
 import { downloadFileFromBrowser } from '@/utility/url';
 import KeyCommand from '../primitives/KeyCommand';
 import LoaderLink from '../LoaderLink';
+import IconCheck from '../icons/IconCheck';
+import { getMenuItemColorClasses } from '../primitives/surface';
+
+/** Default icon column — fits typical 14–16px glyphs */
+export const MENU_ICON_SLOT_CLASS = clsx(
+  'inline-flex items-center justify-center shrink-0',
+  'w-5 h-5',
+);
+
+/** Wide icon column — fits 32×24 nav glyphs (full/grid/sort/etc.) */
+export const MENU_ICON_SLOT_WIDE_CLASS = clsx(
+  'inline-flex items-center justify-center shrink-0',
+  'w-8 h-6',
+);
+
+export const getMenuIconSlotClass = (wide?: boolean) =>
+  wide ? MENU_ICON_SLOT_WIDE_CLASS : MENU_ICON_SLOT_CLASS;
+
+// Indicate the active option in a menu of mutually-exclusive choices.
+// Always reserves check-sized space so labels stay left-aligned.
+export const renderMenuItemCheck = (isChecked: boolean) =>
+  <span className="size-[13px] inline-flex items-center justify-center">
+    {isChecked && <IconCheck size={13} />}
+  </span>;
 
 export default function MoreMenuItem({
   label,
   labelComplex,
   annotation,
   icon,
+  iconWide,
+  accessoryEnd,
   color = 'grey',
   href,
   hrefDownloadName,
@@ -31,6 +57,9 @@ export default function MoreMenuItem({
   labelComplex?: ReactNode
   annotation?: ReactNode
   icon?: ReactNode
+  // Use for 32×24 nav icons so labels align with checkmarks
+  iconWide?: boolean
+  accessoryEnd?: ReactNode
   color?: 'grey' | 'red' | 'yellow'
   href?: string
   hrefDownloadName?: string
@@ -43,29 +72,19 @@ export default function MoreMenuItem({
 }) {
   const [isLoading, setIsLoading] = useState(false);
 
-  const getColorClasses = () => {
-    switch (color) {
-      case 'grey': return clsx(
-        'hover:bg-gray-100/90 active:bg-gray-200/75',
-        'dark:hover:bg-gray-800/60 dark:active:bg-gray-900/80',
-      );
-      case 'red': return clsx(
-        'hover:bg-red-100/50 active:bg-red-100/75',
-        'dark:hover:bg-red-950/55 dark:active:bg-red-950/80',
-      );
-      case 'yellow': return clsx(
-        'hover:bg-amber-100/50 active:bg-amber-100/75',
-        'dark:hover:bg-amber-950/55 dark:active:bg-amber-950/80',
-      );
-    }
-  };
+  const iconSlotClass = getMenuIconSlotClass(iconWide);
+
+  // Stretch the label so a trailing annotation sits on the menu's right edge
+  const classNameContent = annotation
+    ? 'flex grow items-center'
+    : undefined;
 
   const buttonContent = <>
-    <span>
+    <span className={clsx(annotation && 'grow text-left')}>
       {labelComplex ?? label}
     </span>
     {annotation &&
-      <span className="text-dim ml-3">
+      <span className="text-dim ml-3 shrink-0">
         {annotation}
       </span>}
   </>;
@@ -74,14 +93,15 @@ export default function MoreMenuItem({
     <DropdownMenu.Item
       disabled={isLoading}
       className={clsx(
-        'flex items-center h-8.5 gap-4',
-        'px-2 py-2 rounded-sm',
+        'flex items-center h-8.5 gap-3',
+        'px-2 py-2 rounded-lg',
         'select-none hover:outline-hidden',
-        getColorClasses(),
+        getMenuItemColorClasses(color),
         'whitespace-nowrap',
         isLoading
-          ? 'cursor-not-allowed opacity-50'
+          ? 'cursor-not-allowed'
           : 'cursor-pointer',
+        isLoading && icon && 'text-dim',
         className,
       )}
       onSelect={async e => {
@@ -122,11 +142,14 @@ export default function MoreMenuItem({
           href={href}
           className={clsx(
             'inline-flex items-center grow',
-            'text-sm text-main hover:text-main',
+            'text-base text-main hover:text-main',
             // Enlarge clickable area
             '-m-2 p-2',
             keyCommand && 'sm:-mr-10',
           )}
+          classNameIcon={iconSlotClass}
+          classNameWrapper={annotation ? 'grow' : undefined}
+          classNameContent={classNameContent}
           onLoad={() => {
             action?.();
             dismissMenu?.();
@@ -140,11 +163,17 @@ export default function MoreMenuItem({
           isLoading={isLoading}
           hideText="never"
           styleAs="link-without-hover"
-          className="translate-y-[0.5px] text-sm grow"
-          classNameIcon="translate-y-[-0.5px]!"
+          // h-auto: link style defaults to h-4, which clips tall nav icons
+          className="text-base grow text-left h-auto!"
+          classNameIcon={iconSlotClass}
+          classNameContent={classNameContent}
         >
           {buttonContent}
         </LoaderButton>}
+      {accessoryEnd &&
+        <span className="shrink-0 text-dim pointer-events-none">
+          {accessoryEnd}
+        </span>}
       {keyCommand &&
         <KeyCommand
           modifier={keyCommandModifier}

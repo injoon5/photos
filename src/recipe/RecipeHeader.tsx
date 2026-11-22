@@ -7,6 +7,8 @@ import { useAppState } from '@/app/AppState';
 import { descriptionForRecipePhotos, getRecipePropsFromPhotos } from '.';
 import { AI_CONTENT_GENERATION_ENABLED } from '@/app/config';
 import { useAppText } from '@/i18n/state/client';
+import PhotoOmRecipe from '@/platforms/om-system/PhotoOmRecipe';
+import { getOmRecipe } from './serialization';
 
 export default function RecipeHeader({
   recipe,
@@ -28,11 +30,24 @@ export default function RecipeHeader({
   const appText = useAppText();
 
   const recipeProps = getRecipePropsFromPhotos(photos, selectedPhoto);
+  const findOmPhoto = (candidates: (Photo | undefined)[]) =>
+    candidates.find(photo =>
+      getOmRecipe(photo?.recipeData) && photo?.recipeTitle === recipe);
+  // Custom titles may name recipes from either brand
+  const omPhoto = findOmPhoto([selectedPhoto]) ??
+    (recipeProps ? undefined : findOmPhoto(photos));
+  const omRecipe = getOmRecipe(omPhoto?.recipeData);
 
   return (
     <PhotoHeader
       recipe={recipe}
-      entity={<PhotoRecipe
+      entity={omRecipe ? <PhotoOmRecipe
+        recipe={omRecipe}
+        recipeKey={recipe}
+        contrast="high"
+        hoverType="none"
+        hoverCount={count}
+      /> : <PhotoRecipe
         recipe={recipe}
         contrast="high"
         hoverType="none"
@@ -53,7 +68,7 @@ export default function RecipeHeader({
       indexNumber={indexNumber}
       count={count}
       dateRange={dateRange}
-      hasAiTextGeneration={AI_CONTENT_GENERATION_ENABLED}
+      hasAiContentGeneration={AI_CONTENT_GENERATION_ENABLED}
       includeShareButton
     />
   );

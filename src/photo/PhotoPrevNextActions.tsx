@@ -13,19 +13,19 @@ import { pathForAdminPhotoEdit, pathForPhoto } from '@/app/path';
 import { useAppState } from '@/app/AppState';
 import { AnimationConfig } from '@/components/AnimateItems';
 import { clsx } from 'clsx/lite';
-import { FiChevronLeft, FiChevronRight } from 'react-icons/fi';
+import { HiChevronRight, HiChevronLeft } from 'react-icons/hi2';
 import useNavigateOrRunActionWithToast
   from '@/components/useNavigateOrRunActionWithToast';
 import {
   deletePhotoAction,
   syncPhotoAction,
   toggleFavoritePhotoAction,
-  togglePrivatePhotoAction,
 } from './actions';
 import { isPhotoFav } from '@/tag';
 import Tooltip from '@/components/Tooltip';
 import {
   ALLOW_PUBLIC_DOWNLOADS,
+  PHOTO_TITLE_SERIF,
   SHOW_KEYBOARD_SHORTCUT_TOOLTIPS,
 } from '@/app/config';
 import { downloadFileFromBrowser } from '@/utility/url';
@@ -37,17 +37,49 @@ import { useAppText } from '@/i18n/state/client';
 const ANIMATION_LEFT: AnimationConfig = { type: 'left', duration: 0.3 };
 const ANIMATION_RIGHT: AnimationConfig = { type: 'right', duration: 0.3 };
 
+const ICON_CLASSNAME = clsx(
+  PHOTO_TITLE_SERIF ? 'text-[1.4rem]' : 'text-[1.1rem]',
+);
+
+// Match naked nav icon buttons (SwitcherItem width="narrow") on small screens.
+// sm+ stays text ("Prev" / "Next").
+const ICON_BUTTON_LAYOUT_CLASSNAME = clsx(
+  'max-sm:inline-flex max-sm:items-center max-sm:justify-center',
+  'max-sm:w-[42px] max-sm:h-[32px] max-sm:rounded-lg',
+  // LinkWithLoaderBackground adds its own padding and offset
+  'max-sm:mx-0! max-sm:my-0! max-sm:px-0! max-sm:py-0!',
+);
+
+const ICON_BUTTON_CLASSNAME = clsx(
+  ICON_BUTTON_LAYOUT_CLASSNAME,
+  'max-sm:text-gray-400 max-sm:dark:text-gray-600',
+  'max-sm:hover:text-gray-700 max-sm:dark:hover:text-gray-400',
+  'max-sm:hover:bg-gray-100 max-sm:active:bg-gray-200/75',
+  'max-sm:dark:hover:bg-gray-800/75 max-sm:dark:active:bg-gray-900',
+);
+
+// No previous/next photo: lighter than the enabled icon, and not a control,
+// so hover/active must not shift the color or fill.
+const ICON_BUTTON_DISABLED_CLASSNAME = clsx(
+  ICON_BUTTON_LAYOUT_CLASSNAME,
+  'max-sm:text-gray-300! max-sm:dark:text-gray-700!',
+  'max-sm:hover:text-gray-300! max-sm:dark:hover:text-gray-700!',
+  'max-sm:active:text-gray-300! max-sm:dark:active:text-gray-700!',
+  'max-sm:hover:bg-transparent! max-sm:active:bg-transparent!',
+  'max-sm:dark:hover:bg-transparent! max-sm:dark:active:bg-transparent!',
+);
+
 export default function PhotoPrevNextActions({
   photo,
   photos = [],
   className,
-  hasAiTextGeneration,
+  hasAiContentGeneration,
   ...categories
 }: {
   photo?: Photo
   photos?: Photo[]
   className?: string
-  hasAiTextGeneration: boolean
+  hasAiContentGeneration: boolean
 } & PhotoSetCategory) {
   const { setNextPhotoAnimation, isUserSignedIn } = useAppState();
 
@@ -67,10 +99,6 @@ export default function PhotoPrevNextActions({
     if (photo?.id) { return toggleFavoritePhotoAction(photo.id); }
   }, [photo]);
 
-  const toggleHidden = useCallback(() => {
-    if (photo?.id) { return togglePrivatePhotoAction(photo.id); }
-  }, [photo]);
-
   const navigateToPhotoEdit = useNavigateOrRunActionWithToast({
     pathOrAction: photo ? pathForAdminPhotoEdit(photo) : undefined,
     toastMessage: `Editing ${photoTitle} ...`,
@@ -84,16 +112,6 @@ export default function PhotoPrevNextActions({
   const unfavoritePhoto = useNavigateOrRunActionWithToast({
     pathOrAction: toggleFavorite,
     toastMessage: `Unfavoriting ${photoTitle} ...`,
-  });
-
-  const hidePhoto = useNavigateOrRunActionWithToast({
-    pathOrAction: toggleHidden,
-    toastMessage: `Hiding ${photoTitle} ...`,
-  });
-
-  const unhidePhoto = useNavigateOrRunActionWithToast({
-    pathOrAction: toggleHidden,
-    toastMessage: `Unhiding ${photoTitle} ...`,
   });
 
   const syncPhoto = useNavigateOrRunActionWithToast({
@@ -127,7 +145,7 @@ export default function PhotoPrevNextActions({
     : undefined;
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.metaKey) {
+    if (e.metaKey || e.ctrlKey) {
       switch (e.key.toUpperCase()) {
         case KEY_COMMANDS.delete[1]:
           if (isUserSignedIn) {
@@ -139,14 +157,12 @@ export default function PhotoPrevNextActions({
       switch (e.key.toUpperCase()) {
       // Public commands
         case KEY_COMMANDS.prev[0]:
-        case KEY_COMMANDS.prev[1]:
           if (pathPrevious) {
             setNextPhotoAnimation?.(ANIMATION_RIGHT);
             refPrevious.current?.click();
           }
           break;
         case KEY_COMMANDS.next[0]:
-        case KEY_COMMANDS.next[1]:
           if (pathNext) {
             setNextPhotoAnimation?.(ANIMATION_LEFT);
             refNext.current?.click();
@@ -168,15 +184,6 @@ export default function PhotoPrevNextActions({
             unfavoritePhoto();
           }
           break;
-        case KEY_COMMANDS.togglePrivate:
-          if (isUserSignedIn && photo) {
-            if (photo.hidden) {
-              unhidePhoto();
-            } else {
-              hidePhoto();
-            }
-          }
-          break;
         case KEY_COMMANDS.download:
           if (
             (isUserSignedIn || ALLOW_PUBLIC_DOWNLOADS) &&
@@ -190,7 +197,7 @@ export default function PhotoPrevNextActions({
           if (
             isUserSignedIn &&
             photo &&
-            window.confirm(syncPhotoConfirmText(photo, hasAiTextGeneration))
+            window.confirm(syncPhotoConfirmText(photo, hasAiContentGeneration))
           ) {
             syncPhoto();
           }
@@ -206,13 +213,11 @@ export default function PhotoPrevNextActions({
     photo,
     favoritePhoto,
     unfavoritePhoto,
-    hidePhoto,
-    unhidePhoto,
     downloadUrl,
     downloadFileName,
     syncPhoto,
     deletePhoto,
-    hasAiTextGeneration,
+    hasAiContentGeneration,
   ]);
   useKeydownHandler({ onKeyDown });
 
@@ -222,48 +227,66 @@ export default function PhotoPrevNextActions({
       className,
     )}>
       <div className={clsx(
-        'h-4',
         'flex gap-2 select-none',
-        // Fixes alignment issue when switching from chevrons to text
-        'items-center sm:items-start',
+        // Icon buttons match nav height; text links stay on the baseline
+        'max-sm:h-[32px] max-sm:items-center',
+        'sm:h-4 sm:items-start',
         '*:select-none',
       )}>
-        <Tooltip {...SHOW_KEYBOARD_SHORTCUT_TOOLTIPS && {
-          content: appText.nav.prev,
-          keyCommand: KEY_COMMANDS.prev[0],
-        }}>
+        <Tooltip
+          triggerIsFocusable
+          {...SHOW_KEYBOARD_SHORTCUT_TOOLTIPS && {
+            content: appText.nav.prev,
+            keyCommand: KEY_COMMANDS.prev[0],
+          }}
+        >
           <PhotoLink
             {...categories}
             ref={refPrevious}
             photo={previousPhoto}
             nextPhotoAnimation={ANIMATION_RIGHT}
+            className={previousPhoto
+              ? ICON_BUTTON_CLASSNAME
+              : ICON_BUTTON_DISABLED_CLASSNAME}
             scroll={false}
             loaderType="badge"
             prefetch
           >
-            <FiChevronLeft className="sm:hidden text-[1.1rem]" />
+            <HiChevronLeft className={clsx(
+              'sm:hidden',
+              ICON_CLASSNAME,
+            )} />
             <span className="hidden sm:inline-block uppercase">
               {appText.nav.prevShort}
             </span>
           </PhotoLink>
         </Tooltip>
-        <span className="text-extra-extra-dim">
+        <span className="text-extra-extra-dim text-[1.25rem] font-serif">
           /
         </span>
-        <Tooltip {...SHOW_KEYBOARD_SHORTCUT_TOOLTIPS && {
-          content: appText.nav.next,
-          keyCommand: KEY_COMMANDS.next[0],
-        }}>
+        <Tooltip
+          triggerIsFocusable
+          {...SHOW_KEYBOARD_SHORTCUT_TOOLTIPS && {
+            content: appText.nav.next,
+            keyCommand: KEY_COMMANDS.next[0],
+          }}
+        >
           <PhotoLink
             {...categories}
             ref={refNext}
             photo={nextPhoto}
             nextPhotoAnimation={ANIMATION_LEFT}
+            className={nextPhoto
+              ? ICON_BUTTON_CLASSNAME
+              : ICON_BUTTON_DISABLED_CLASSNAME}
             scroll={false}
             loaderType="badge"
             prefetch
           >
-            <FiChevronRight className="sm:hidden text-[1.1rem]" />
+            <HiChevronRight className={clsx(
+              'sm:hidden',
+              ICON_CLASSNAME,
+            )} />
             <span className="hidden sm:inline-block uppercase">
               {appText.nav.nextShort}
             </span>

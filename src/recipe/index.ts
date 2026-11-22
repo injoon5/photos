@@ -14,10 +14,16 @@ import { FujifilmRecipe } from '@/platforms/fujifilm/recipe';
 import { labelForFilm } from '@/film';
 import { AppTextState } from '@/i18n/state';
 import { CategoryQueryMeta } from '@/category';
+import {
+  isOmRecipeKey,
+  labelForOmRecipeKey,
+} from '@/platforms/om-system/recipe';
 
-export type RecipeWithMeta = { recipe: string } & CategoryQueryMeta
+import { getFujifilmRecipe } from './serialization';
 
-export type Recipes = RecipeWithMeta[]
+export type RecipeWithMeta = { recipe: string } & CategoryQueryMeta;
+
+export type Recipes = RecipeWithMeta[];
 
 export interface RecipeProps {
   title?: string
@@ -28,8 +34,10 @@ export interface RecipeProps {
   make?: string
 }
 
-export const formatRecipe = (recipe?: string) =>
-  capitalizeWords(recipe?.replaceAll('-', ' '));
+export const formatRecipe = (recipe = '') =>
+  isOmRecipeKey(recipe)
+    ? labelForOmRecipeKey(recipe)
+    : capitalizeWords(recipe.replaceAll('-', ' '));
 
 export const titleForRecipe = (
   recipe: string,
@@ -99,7 +107,7 @@ export const generateRecipeLines = (
     );
   }
   lines.push(...abbreviate
-    // eslint-disable-next-line max-len
+    // eslint-disable-next-line @stylistic/max-len
     ? [`COL${addSign(data.color)} SHARP${addSign(data.sharpness)} CLAR${addSign(data.clarity)}`]
     : [
       `COLOR: ${addSign(data.color)}`,
@@ -127,7 +135,7 @@ export const generateRecipeLines = (
   }
   if (data.bwAdjustment || data.bwMagentaGreen) {
     lines.push(...abbreviate
-      // eslint-disable-next-line max-len
+      // eslint-disable-next-line @stylistic/max-len
       ? [`BW ADJ${addSign(data.bwAdjustment)} M/G${addSign(data.bwMagentaGreen)}`]
       : [
         `BW ADJUSTMENT: ${addSign(data.bwAdjustment)}`,
@@ -166,7 +174,7 @@ export const generateMetaForRecipe = (
 });
 
 const photoHasRecipe = (photo?: Photo) =>
-  photo?.film && photo?.recipeData;
+  photo?.film && getFujifilmRecipe(photo.recipeData);
 
 const getPhotoWithRecipeFromPhotos = (
   photos: Photo[],
@@ -180,10 +188,11 @@ export const getRecipePropsFromPhotos = (
   ...args: Parameters<typeof getPhotoWithRecipeFromPhotos>
 ): RecipeProps | undefined => {
   const photo = getPhotoWithRecipeFromPhotos(...args);
-  return photo?.recipeData && photo?.film
+  const data = getFujifilmRecipe(photo?.recipeData);
+  return data && photo?.film
     ? {
       title: photo.recipeTitle,
-      data: photo.recipeData,
+      data,
       film: photo.film,
       iso: photo.isoFormatted,
       exposure: photo.exposureTimeFormatted,

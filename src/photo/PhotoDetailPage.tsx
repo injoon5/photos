@@ -21,11 +21,13 @@ import {
 import YearHeader from '@/year/YearHeader';
 import RecentsHeader from '@/recents/RecentsHeader';
 import AlbumHeader from '@/album/AlbumHeader';
+import QueryHeader from '@/query/QueryHeader';
 
 export default function PhotoDetailPage({
   photo,
   photos,
   photosGrid,
+  query,
   recent,
   year,
   camera,
@@ -52,7 +54,16 @@ export default function PhotoDetailPage({
 } & PhotoSetCategory) {
   let customHeader: ReactNode | undefined;
 
-  if (year) {
+  if (query) {
+    customHeader = <QueryHeader
+      query={query}
+      photos={photos}
+      selectedPhoto={photo}
+      indexNumber={indexNumber}
+      count={count}
+      dateRange={dateRange}
+    />;
+  } else if (year) {
     customHeader = <YearHeader
       year={year}
       photos={photos}
@@ -142,16 +153,13 @@ export default function PhotoDetailPage({
   }
 
   return (
-    <div>
-      <AppGrid
-        className="mt-1.5 mb-6"
-        contentMain={customHeader ?? <PhotoHeader
-          selectedPhoto={photo}
-          photos={photos}
-          recipe={recipe}
-          hasAiTextGeneration={AI_CONTENT_GENERATION_ENABLED}
-        />}
-      />
+    <div className="mt-1.5">
+      {customHeader ?? <PhotoHeader
+        selectedPhoto={photo}
+        photos={photos}
+        recipe={recipe}
+        hasAiContentGeneration={AI_CONTENT_GENERATION_ENABLED}
+      />}
       <AnimateItems
         className="md:mb-8"
         animateFromAppState
@@ -163,6 +171,7 @@ export default function PhotoDetailPage({
             primaryTag={tag}
             priority
             prefetchRelatedLinks
+            query={query}
             recent={recent}
             year={year}
             showTitle={Boolean(customHeader)}
@@ -172,6 +181,7 @@ export default function PhotoDetailPage({
             showFilm={!film}
             showRecipe={!recipe}
             shouldShare={shouldShare}
+            shouldShareQuery={query !== undefined}
             shouldShareRecents={recent !== undefined}
             shouldShareYear={year !== undefined}
             shouldShareCamera={camera !== undefined}
@@ -190,11 +200,13 @@ export default function PhotoDetailPage({
       <AppGrid
         contentMain={<PhotoGrid
           photos={photosGrid ?? photos}
+          query={query}
           tag={tag}
           camera={camera}
           film={film}
           focal={focal}
           year={year}
+          recipe={recipe}
           animateOnFirstLoadOnly
         />}
       />

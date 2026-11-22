@@ -5,8 +5,8 @@ import AdminTable from './AdminTable';
 import { Fragment } from 'react';
 import PhotoSmall from '@/photo/PhotoSmall';
 import { clsx } from 'clsx/lite';
-import { pathForAdminPhotoEdit, pathForPhoto } from '@/app/path';
-import Link from 'next/link';
+import { pathForAdminPhotoEdit } from '@/app/path';
+import { COLOR_SORT_ENABLED } from '@/app/config';
 import PhotoDate from '@/photo/PhotoDate';
 import EditButton from './EditButton';
 import { useAppState } from '@/app/AppState';
@@ -19,14 +19,17 @@ import { doesPhotoHaveDefaultVisibility } from '@/photo/visibility';
 import UpdateTooltip from '@/photo/update/UpdateTooltip';
 import PhotoColors from '@/photo/color/PhotoColors';
 import SyncColorButton from '@/photo/color/SyncColorButton';
+import ColorDot from '@/photo/color/ColorDot';
+import { getKeyColorFromPhoto } from '@/photo/color/client';
 import AdminPhotoMenu from './AdminPhotoMenu';
+import PhotoLink from '@/photo/PhotoLink';
 
 export default function AdminPhotosTable({
   photos,
   onLastPhotoVisible,
   revalidatePhoto,
   photoIdsSyncing = [],
-  hasAiTextGeneration,
+  hasAiContentGeneration,
   dateType = 'createdAt',
   canEdit = true,
   canSync,
@@ -40,7 +43,7 @@ export default function AdminPhotosTable({
   onLastPhotoVisible?: () => void
   revalidatePhoto?: RevalidatePhoto
   photoIdsSyncing?: string[]
-  hasAiTextGeneration: boolean
+  hasAiContentGeneration: boolean
   dateType?: 'createdAt' | 'updatedAt'
   canEdit?: boolean
   canSync?: boolean
@@ -77,16 +80,26 @@ export default function AdminPhotosTable({
               key={photo.id}
               className="lg:min-w-[50%] flex items-center gap-1.5"
             >
+              {COLOR_SORT_ENABLED &&
+                <span className="inline-flex shrink-0">
+                  <ColorDot
+                    color={getKeyColorFromPhoto(photo)}
+                    title="Key Color"
+                    size="small"
+                    className="mr-1"
+                  />
+                </span>}
               <span className={clsx(
                 'truncate',
                 photo.hidden && 'text-dim',
               )}>
-                <Link
-                  href={pathForPhoto({ photo })}
+                <PhotoLink
+                  photo={photo}
                   prefetch={false}
+                  showHover
                 >
                   {titleForPhoto(photo, false)}
-                </Link>
+                </PhotoLink>
                 {debugColorData && photo.colorData &&
                   <div>
                     <PhotoColors colorData={photo.colorData} />
@@ -134,7 +147,7 @@ export default function AdminPhotosTable({
                 photo={photo}
                 onSyncComplete={invalidateSwr}
                 isSyncingExternal={photoIdsSyncing.includes(photo.id)}
-                hasAiTextGeneration={hasAiTextGeneration}
+                hasAiContentGeneration={hasAiContentGeneration}
                 disabled={photoIdsSyncing.length > 0}
                 className={opacityForPhotoId(photo.id)}
                 shouldConfirm

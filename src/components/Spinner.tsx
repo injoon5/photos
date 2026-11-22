@@ -2,17 +2,28 @@ import { clsx } from 'clsx/lite';
 
 const SIZE_DEFAULT = 12;
 
-export type SpinnerColor = 'text' | 'dim' | 'light-gray' | 'semi-transparent';
+export type SpinnerColor =
+  'text' |
+  'dim' |
+  'light-gray' |
+  'semi-transparent' |
+  'frosted';
 
 export default function Spinner({
   size = SIZE_DEFAULT,
   color = 'light-gray',
   className,
 }: {
-  size?: number
+  // Numbers are pixels. CSS lengths (for example "1em") scale the
+  // whole mark, including the stroke, with the surrounding text.
+  size?: number | string
   color?: SpinnerColor
   className?: string
 }) {
+  const strokeWidth = typeof size === 'number'
+    ? SIZE_DEFAULT / size * 2
+    : 2;
+
   return (
     <span
       className={clsx(
@@ -23,6 +34,8 @@ export default function Spinner({
           'text-dim',
         color === 'semi-transparent' &&
           'text-black/20 dark:text-white/20',
+        color === 'frosted' &&
+          'text-gray-100/40',
         className,
       )}
       style={{
@@ -36,12 +49,12 @@ export default function Spinner({
         viewBox="0 0 12 12"
         fill="none"
         stroke="currentColor"
-        strokeWidth={SIZE_DEFAULT / size * 2}
+        strokeWidth={strokeWidth}
         xmlns="http://www.w3.org/2000/svg"
         className="animate-rotate-pulse"
       >
         <path
-          // eslint-disable-next-line max-len
+          // eslint-disable-next-line @stylistic/max-len
           d="M11 6C11 3.23858 8.76142 1 6 1C3.23858 1 1 3.23858 1 6C1 8.76142 3.23858 11 6 11"
         />
       </svg>

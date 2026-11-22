@@ -3,24 +3,18 @@
 import { clsx } from 'clsx/lite';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import AppGrid from '../components/AppGrid';
-import AppViewSwitcher, { SwitcherSelection } from '@/app/AppViewSwitcher';
+import AppToolbar from '@/app/AppToolbar';
 import {
-  PATH_ROOT,
-  isPathAbout,
+  PATH_HOME_INFERRED,
   isPathAdmin,
-  isPathFull,
-  isPathGrid,
-  isPathProtected,
+  isPathAdminPhotoEdit,
   isPathSignIn,
 } from '@/app/path';
 import AnimateItems from '../components/AnimateItems';
-import {
-  GRID_HOMEPAGE_ENABLED,
-  NAV_CAPTION,
-} from './config';
+import { NAV_CAPTION } from './config';
+import { LAYOUT_CLASS_MAIN } from './layout-metrics';
 import { useRef } from 'react';
-import useStickyNav from './useStickyNav';
+import useStickyHeader from './useStickyHeader';
 import { useAppState } from '@/app/AppState';
 
 const NAV_HEIGHT_CLASS = NAV_CAPTION
@@ -36,7 +30,7 @@ export default function NavClient({
   navCaption?: string
   isInEmptyState: boolean
 }) {
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
   const pathname = usePathname();
   const showNav = !isPathSignIn(pathname);
@@ -46,10 +40,12 @@ export default function NavClient({
   } = useAppState();
 
   const {
-    classNameStickyContainer,
-    classNameStickyNav,
-    isNavVisible,
-  } = useStickyNav(ref, !isPathAdmin(pathname));
+    containerClassName,
+    containerStyle,
+    contentClassName,
+    contentStyle,
+    isVisible,
+  } = useStickyHeader(ref, !isPathAdminPhotoEdit(pathname));
 
   const renderLink = (
     text: string,
@@ -59,52 +55,42 @@ export default function NavClient({
       ? <Link href={linkOrAction}>{text}</Link>
       : <button onClick={linkOrAction} type="button">{text}</button>;
 
-  const switcherSelectionForPath = (): SwitcherSelection | undefined => {
-    if (pathname === PATH_ROOT) {
-      return GRID_HOMEPAGE_ENABLED ? 'grid' : 'full';
-    } else if (isPathGrid(pathname)) {
-      return 'grid';
-    } else if (isPathFull(pathname)) {
-      return 'full';
-    } else if (isPathAbout(pathname)) {
-      return 'about';
-    } else if (isPathProtected(pathname)) {
-      return 'admin';
-    }
-  };
-
   return (
-    <AppGrid
-      className={classNameStickyContainer}
-      classNameMain='pointer-events-auto'
-      contentMain={
+    <div
+      ref={ref}
+      className={clsx('w-full', containerClassName)}
+      style={containerStyle}
+    >
+      <div
+        className={clsx(
+          'bg-main',
+          // Full-bleed without w-screen (overflow breaks position:sticky)
+          'shadow-[0_0_0_100vmax_white] dark:shadow-[0_0_0_100vmax_black]',
+          '[clip-path:inset(0_-100vmax)]',
+          contentClassName,
+        )}
+        style={contentStyle}
+      >
         <AnimateItems
+          className={clsx('mx-auto w-full', LAYOUT_CLASS_MAIN)}
           animateOnFirstLoadOnly
           type={!isInEmptyState && !isPathAdmin(pathname) ? 'bottom' : 'none'}
           distanceOffset={10}
           items={showNav
             ? [<nav
               key="nav"
-              ref={ref}
               className={clsx(
-                'w-full flex items-center gap-2 bg-main',
+                'text-base',
+                'w-full flex items-center gap-2 sm:gap-3',
                 NAV_HEIGHT_CLASS,
-                // Enlarge nav to ensure it fully masks underlying content
-                'md:w-[calc(100%+8px)] md:translate-x-[-4px] md:px-[4px]',
-                classNameStickyNav,
-              )}>
-              <AppViewSwitcher
-                currentSelection={switcherSelectionForPath()}
-                className="translate-x-[-1px]"
-                animate={hasLoadedWithAnimations && isNavVisible}
-                hideSortControl={isInEmptyState}
-              />
+              )}
+            >
               <div className={clsx(
-                'grow text-right min-w-0',
+                'grow min-w-0',
                 'translate-y-[-1px]',
               )}>
                 <div className="truncate overflow-hidden select-none">
-                  {renderLink(navTitle, PATH_ROOT)}
+                  {renderLink(navTitle, PATH_HOME_INFERRED)}
                 </div>
                 {navCaption &&
                   <div className={clsx(
@@ -114,10 +100,14 @@ export default function NavClient({
                     {navCaption}
                   </div>}
               </div>
+              <AppToolbar
+                animate={hasLoadedWithAnimations && isVisible}
+                isInEmptyState={isInEmptyState}
+              />
             </nav>]
             : []}
         />
-      }
-    />
+      </div>
+    </div>
   );
 };

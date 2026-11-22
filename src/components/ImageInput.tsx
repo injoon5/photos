@@ -7,8 +7,11 @@ import { ACCEPTED_PHOTO_FILE_TYPES } from '@/photo';
 import { FiUploadCloud } from 'react-icons/fi';
 import { MAX_IMAGE_SIZE } from '@/platforms/next-image';
 import ProgressButton from './primitives/ProgressButton';
-import { useAppState } from '@/app/AppState';
+import ResponsiveText from './primitives/ResponsiveText';
+import { useUploadState } from '@/admin/upload/UploadState';
 import { useAppText } from '@/i18n/state/client';
+import { getUploadProgress, UploadBlobArgs } from '@/admin/upload';
+import { isAbortError } from '@/utility/abort';
 
 export default function ImageInput({
   ref: inputRefExternal,
@@ -22,6 +25,7 @@ export default function ImageInput({
   quality = 0.9,
   hidden,
   showButton,
+  primary,
   disabled: disabledProp,
   debug: _debug,
 }: {
@@ -29,18 +33,14 @@ export default function ImageInput({
   id?: string
   className?: string
   onStart?: () => void
-  onBlobReady?: (args: {
-    blob: Blob,
-    extension?: string,
-    hasMultipleUploads?: boolean,
-    isLastBlob?: boolean,
-  }) => Promise<any>
+  onBlobReady?: (args: UploadBlobArgs) => Promise<any>
   multiple?: boolean
   shouldResize?: boolean
   maxSize?: number
   quality?: number
   hidden?: boolean
   showButton?: boolean
+  primary?: boolean
   disabled?: boolean
   debug?: boolean
 }) {
@@ -53,10 +53,12 @@ export default function ImageInput({
       isUploading,
       filesLength,
       fileUploadIndex,
+      uploadProgress,
     },
     setUploadState,
     resetUploadState,
-  } = useAppState();
+    startUploadSession,
+  } = useUploadState();
   
   const appText = useAppText();
 
@@ -82,8 +84,8 @@ export default function ImageInput({
             <ProgressButton
               type="button"
               isLoading={disabled}
-              progress={filesLength > 1
-                ? (fileUploadIndex + 1) / filesLength * 0.95
+              progress={isUploading
+                ? uploadProgress ?? 0
                 : undefined}
               icon={<FiUploadCloud
                 size={18}
@@ -92,15 +94,20 @@ export default function ImageInput({
               aria-disabled={disabled}
               onClick={() => inputRef.current?.click()}
               hideText="never"
-              primary
+              primary={primary}
             >
               {isUploading
                 ? filesLength > 1
-                  ? appText.utility.paginateAction(
+                  ? <ResponsiveText shortText={appText.utility.paginate(
                     fileUploadIndex + 1,
                     filesLength,
-                    appText.admin.uploading,
-                  )
+                  )}>
+                    {appText.utility.paginateAction(
+                      fileUploadIndex + 1,
+                      filesLength,
+                      appText.admin.uploading,
+                    )}
+                  </ResponsiveText>
                   : appText.admin.uploading
                 : appText.admin.uploadPhotos}
             </ProgressButton>}
@@ -113,61 +120,96 @@ export default function ImageInput({
             disabled={disabled}
             multiple={multiple}
             onChange={async e => {
-              onStart?.();
               const { files } = e.currentTarget;
               if (files && files.length > 0) {
-                setUploadState?.({ filesLength: files.length });
-                for (let i = 0; i < files.length; i++) {
-                  const file = files[i];
+                const abortSignal = startUploadSession?.();
+                onStart?.();
+                const fileSizes = Array.from(files, file => file.size);
+                const reportProgress = (
+                  fileIndex: number,
+                  bytesLoaded: number,
+                ) => {
                   setUploadState?.({
-                    fileUploadIndex: i,
-                    fileUploadName: file.name,
+                    uploadProgress: getUploadProgress(
+                      fileSizes,
+                      fileIndex,
+                      bytesLoaded,
+                    ),
                   });
-                  const inputExtension = file.name
-                    .split('.')
-                    .pop()?.toLowerCase();
+                };
+                setUploadState?.({
+                  filesLength: files.length,
+                  uploadProgress: 0,
+                });
+                try {
+                  for (let i = 0; i < files.length; i++) {
+                    if (abortSignal?.aborted) { break; }
 
-                  const isInputPng = inputExtension === 'png';
-                  
-                  const outputExtension = shouldResize
-                    ? 'jpeg'
-                    : inputExtension;
-                  
-                  const callbackArgs = {
-                    extension: outputExtension,
-                    hasMultipleUploads: files.length > 1,
-                    isLastBlob: i === files.length - 1,
-                  };
+                    const file = files[i];
+                    setUploadState?.({
+                      fileUploadIndex: i,
+                      fileUploadName: file.name,
+                    });
+                    reportProgress(i, 0);
+                    const inputExtension = file.name
+                      .split('.')
+                      .pop()?.toLowerCase();
 
-                  let blob: Blob | File = file;
+                    const isInputPng = inputExtension === 'png';
                   
-                  if (shouldResize) {
-                    if (isInputPng) {
-                      // Use specialized PNG <> JPEG converter
-                      // for EXIF preservation
-                      blob = await pngToJpegWithExif(
-                        file,
-                        { maxSize, quality },
-                      ).catch(() => file);
-                    } else {
-                      // Use specialized JPG <> JPEG converter
-                      // for EXIF preservation
-                      blob = await jpgToJpegWithExif(
-                        file,
-                        { maxSize, quality },
-                      ).catch(() => file);
+                    const outputExtension = shouldResize
+                      ? 'jpeg'
+                      : inputExtension;
+                  
+                    const callbackArgs = {
+                      extension: outputExtension,
+                      hasMultipleUploads: files.length > 1,
+                      isLastBlob: i === files.length - 1,
+                      abortSignal,
+                    };
+
+                    let blob: Blob | File = file;
+                  
+                    if (shouldResize) {
+                      if (isInputPng) {
+                        // Use specialized PNG <> JPEG converter
+                        // for EXIF preservation
+                        blob = await pngToJpegWithExif(
+                          file,
+                          { maxSize, quality },
+                        ).catch(() => file);
+                      } else {
+                        // Use specialized JPG <> JPEG converter
+                        // for EXIF preservation
+                        blob = await jpgToJpegWithExif(
+                          file,
+                          { maxSize, quality },
+                        ).catch(() => file);
+                      }
                     }
 
+                    if (abortSignal?.aborted) { break; }
+
+                    fileSizes[i] = blob.size;
+                    reportProgress(i, 0);
+
                     await onBlobReady?.({
                       ...callbackArgs,
                       blob,
+                      onProgress: loaded => reportProgress(i, loaded),
                     });
-                  } else {
-                    // No need to process
-                    await onBlobReady?.({
-                      ...callbackArgs,
-                      blob,
-                    });
+
+                    if (abortSignal?.aborted) { break; }
+
+                    reportProgress(i, fileSizes[i]);
+                  }
+                } catch (error) {
+                  if (!isAbortError(error)) {
+                    throw error;
+                  }
+                } finally {
+                  if (abortSignal?.aborted && inputRef.current) {
+                    inputRef.current.value = '';
                   }
                 }
               } else {

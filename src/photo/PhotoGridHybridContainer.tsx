@@ -1,0 +1,152 @@
+'use client';
+
+import AppGrid from '@/components/AppGrid';
+import PhotoGrid from './PhotoGrid';
+import PhotoGridInfinite from './PhotoGridInfinite';
+import PhotosLarge from './PhotosLarge';
+import PhotosLargeInfinite from './PhotosLargeInfinite';
+import { clsx } from 'clsx/lite';
+import { ComponentProps, useCallback, useState, ReactNode } from 'react';
+import { GRID_SPACE_CLASSNAME } from '@/components';
+import { SortBy } from './sort';
+import { MASONRY_GRID_ENABLED } from '@/app/config';
+import { useAppState } from '@/app/AppState';
+import { LAYOUT_CLASS_FEED } from '@/app/layout-metrics';
+import {
+  INFINITE_SCROLL_FULL_INITIAL,
+  INFINITE_SCROLL_FULL_MULTIPLE,
+} from '.';
+
+// Shows either grid or full frame with infinite scroll
+
+export default function PhotoGridHybridContainer({
+  cacheKey,
+  photos,
+  count,
+  sortBy,
+  sortWithPriority,
+  excludeFromFeeds,
+  animateOnFirstLoadOnly,
+  header,
+  sidebar,
+  className,
+  matted,
+  ...categories
+}: {
+  cacheKey: string
+  count: number
+  sortBy?: SortBy
+  sortWithPriority?: boolean
+  excludeFromFeeds?: boolean
+  header?: ReactNode
+  sidebar?: ReactNode
+  className?: string
+} & ComponentProps<typeof PhotoGrid>) {
+  const { isPhotoSetFull } = useAppState();
+
+  const [
+    shouldAnimateDynamicItems,
+    setShouldAnimateDynamicItems,
+  ] = useState(false);
+  const onAnimationComplete = useCallback(() =>
+    setShouldAnimateDynamicItems(true), []);
+
+  // Full frame only offered on photo sets, which always render a header
+  const photosFull = header && isPhotoSetFull
+    // Server sends grid-sized batch, so only show full-sized slice
+    // and let infinite scroll take over
+    ? photos.slice(0, INFINITE_SCROLL_FULL_INITIAL)
+    : undefined;
+
+  // Header stays a sibling of the photos so sticky isn't trapped
+  if (photosFull) {
+    return (
+      <div className={clsx('mt-1.5', className)}>
+        {header}
+        <div className="space-y-1">
+          <PhotosLarge {...{ photos: photosFull, ...categories }} />
+          {count > photosFull.length &&
+            <PhotosLargeInfinite {...{
+              // Keep grid and full frame caches separate
+              cacheKey: `${cacheKey}-full`,
+              initialOffset: photosFull.length,
+              itemsPerPage: INFINITE_SCROLL_FULL_MULTIPLE,
+              sortBy,
+              sortWithPriority,
+              excludeFromFeeds,
+              ...categories,
+            }} />}
+        </div>
+      </div>
+    );
+  }
+
+  const grid = (
+    <div className={matted && !MASONRY_GRID_ENABLED
+      // Match matted grid gap-y-2 between infinite-scroll batches below lg
+      ? 'max-lg:space-y-2'
+      : GRID_SPACE_CLASSNAME}
+    >
+      {(!MASONRY_GRID_ENABLED || count <= photos.length) && (
+        <PhotoGrid {...{
+          photos,
+          matted,
+          ...categories,
+          animateOnFirstLoadOnly,
+          onAnimationComplete,
+        }} />
+      )}
+      {count > photos.length &&
+        <PhotoGridInfinite {...{
+          // Keep grid and full frame caches separate
+          cacheKey: `${cacheKey}-grid`,
+          initialPhotos: MASONRY_GRID_ENABLED ? photos : undefined,
+          initialOffset: photos.length,
+          sortBy,
+          sortWithPriority,
+          excludeFromFeeds,
+          matted,
+          ...categories,
+          canStart: shouldAnimateDynamicItems,
+          animateOnFirstLoadOnly,
+        }} />}
+    </div>
+  );
+
+  // Matted /grid feed (no sidebar): at lg+ wider than nav (like /full);
+  // below lg full content width so edge photos meet page margins
+  // Masonry uses standard AppGrid width instead
+  if (matted && !MASONRY_GRID_ENABLED && !sidebar) {
+    return (
+      <div className={clsx(
+        'mx-auto w-full',
+        LAYOUT_CLASS_FEED,
+        header && 'mt-1.5',
+        className,
+      )}>
+        {header}
+        {grid}
+      </div>
+    );
+  }
+
+  const gridSection = (
+    <AppGrid
+      contentMain={grid}
+      contentSide={sidebar}
+    />
+  );
+
+  if (!header) {
+    return className
+      ? <div className={className}>{gridSection}</div>
+      : gridSection;
+  }
+
+  return (
+    <div className={clsx('mt-1.5', className)}>
+      {header}
+      {gridSection}
+    </div>
+  );
+}

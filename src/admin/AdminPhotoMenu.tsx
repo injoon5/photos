@@ -1,19 +1,19 @@
 'use client';
 
-import { ComponentProps, useMemo, useRef } from 'react';
+import { ComponentProps, useCallback, useMemo, useRef } from 'react';
 import {
   getPathComponents,
   PARAM_REDIRECT,
-  PATH_ROOT,
   pathForAdminPhotoEdit,
-  pathForTag,
+  pathForPhoto,
 } from '@/app/path';
 import {
   deletePhotoAction,
   replacePhotoStorageAction,
+  setPhotoVisibilityAction,
+  storeColorDataForPhotoAction,
   syncPhotoAction,
   toggleFavoritePhotoAction,
-  togglePrivatePhotoAction,
 } from '@/photo/actions';
 import {
   Photo,
@@ -21,26 +21,36 @@ import {
   downloadFileNameForPhoto,
   titleForPhoto,
 } from '@/photo';
-import { isPathFavs, isPhotoFav, TAG_PRIVATE } from '@/tag';
-import { usePathname } from 'next/navigation';
+import { isPathFavs, isPhotoFav } from '@/tag';
+import { usePathname, useRouter } from 'next/navigation';
 import MoreMenu, { MoreMenuSection } from '@/components/more/MoreMenu';
+import { renderMenuItemCheck } from '@/components/more/MoreMenuItem';
 import { useAppState } from '@/app/AppState';
 import { RevalidatePhoto } from '@/photo/InfinitePhotoScroll';
 import { MdOutlineFileDownload } from 'react-icons/md';
+import { IoMdColorFilter } from 'react-icons/io';
+import { FaArrowRight } from 'react-icons/fa6';
 import IconGrSync from '@/components/icons/IconGrSync';
+import { toastSuccess, toastWaiting, toastWarning } from '@/toast';
+import ColorDot from '@/photo/color/ColorDot';
+import { getKeyColorFromPhoto } from '@/photo/color/client';
 import InsightsIndicatorDot from './insights/InsightsIndicatorDot';
 import IconFavs from '@/components/icons/IconFavs';
 import IconEdit from '@/components/icons/IconEdit';
 import { photoNeedsToBeUpdated } from '@/photo/update';
 import { KEY_COMMANDS } from '@/photo/key-commands';
 import { useAppText } from '@/i18n/state/client';
-import IconLock from '@/components/icons/IconLock';
 import IconTrash from '@/components/icons/IconTrash';
 import IconUpload from '@/components/icons/IconUpload';
 import { uploadPhotoFromClient } from '@/photo/storage';
 import ImageInput from '@/components/ImageInput';
 import { PRESERVE_ORIGINAL_UPLOADS } from '@/app/config';
 import IconWarning from '@/components/icons/IconWarning';
+import {
+  getVisibilityFromPhoto,
+  getVisibilityOptions,
+  VisibilityValue,
+} from '@/photo/visibility';
 
 export default function AdminPhotoMenu({
   photo,
@@ -62,6 +72,9 @@ export default function AdminPhotoMenu({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const onUploadFinishRef = useRef<() => void>(null);
+  const reuploadSyncRef = useRef(false);
+
+  const router = useRouter();
 
   const path = usePathname();
   const pathComponents = getPathComponents(path);
@@ -69,19 +82,35 @@ export default function AdminPhotoMenu({
   const isFav = isPhotoFav(photo);
   const shouldRedirectFav = isPathFavs(path) && isFav;
   const shouldRedirectDelete = isOnPhotoDetail;
-  const redirectPathOnPrivateToggle = isOnPhotoDetail
-    ? photo.hidden
-      ? pathForTag(TAG_PRIVATE)
-      : PATH_ROOT
-    : undefined;
+  const visibility = getVisibilityFromPhoto(photo);
+  // Only leave the photo detail page when privacy itself changes, following
+  // the photo to its new url: private photos are only reachable beneath the
+  // private tag, public photos only outside it
+  const redirectPathForVisibility = useCallback((value: VisibilityValue) => {
+    const willBePrivate = value === 'private';
+    return isOnPhotoDetail && willBePrivate !== Boolean(photo.hidden)
+      ? pathForPhoto({ photo: { ...photo, hidden: willBePrivate } })
+      : undefined;
+  }, [isOnPhotoDetail, photo]);
+
+  const openReuploadPicker = useCallback((sync: boolean) =>
+    new Promise<boolean | void>(resolve => {
+      reuploadSyncRef.current = sync;
+      onUploadFinishRef.current = () => resolve();
+      if (inputRef.current) {
+        inputRef.current.value = '';
+        inputRef.current.click();
+        inputRef.current.oncancel = () => resolve(false);
+      } else {
+        resolve();
+      }
+    })
+  , []);
 
   const sectionMain = useMemo(() => {
     const items: MoreMenuSection['items'] = [{
       label: appText.admin.edit,
-      icon: <IconEdit
-        size={14}
-        className="translate-x-[1px] translate-y-[-0.5px]"
-      />,
+      icon: <IconEdit />,
       href: pathForAdminPhotoEdit(photo.id) +
         `?${PARAM_REDIRECT}=${encodeURIComponent(path)}`,
       ...showKeyCommands && { keyCommand: KEY_COMMANDS.edit },
@@ -106,23 +135,6 @@ export default function AdminPhotoMenu({
       });
     }
     items.push({
-      label: photo.hidden ? appText.admin.public : appText.admin.private,
-      icon: <IconLock
-        size={16}
-        className="translate-x-[-1.5px] translate-y-[0.5px]"
-        open={!photo.hidden}
-        narrow
-      />,
-      action: () => togglePrivatePhotoAction(
-        photo.id,
-        redirectPathOnPrivateToggle,
-      )
-        .then(() => revalidatePhoto?.(photo.id)),
-      ...showKeyCommands && {
-        keyCommand: KEY_COMMANDS.togglePrivate,
-      },
-    });
-    items.push({
       label: appText.admin.download,
       icon: <MdOutlineFileDownload
         size={18}
@@ -132,6 +144,32 @@ export default function AdminPhotoMenu({
       hrefDownloadName: downloadFileNameForPhoto(photo),
       ...showKeyCommands && { keyCommand: KEY_COMMANDS.download },
     });
+    const visibilityOptions = getVisibilityOptions(appText);
+    items.push({
+      label: appText.admin.setVisibility,
+      icon: <span className="block translate-x-[-1px]">{visibilityOptions
+        .find(({ value }) => value === visibility)
+        ?.accessoryStart}</span>,
+      items: visibilityOptions.map(({ value, label, accessoryStart }) => ({
+        label,
+        // Selected visibility is marked with a check, unselected show its icon
+        icon: value === visibility
+          ? renderMenuItemCheck(true)
+          : accessoryStart,
+        action: () => setPhotoVisibilityAction(
+          photo.id,
+          value,
+          redirectPathForVisibility(value),
+        )
+          .then(() => {
+            // Photos leaving a feed shift every subsequent page
+            revalidatePhoto?.(photo.id, true);
+            // Update photos rendered on the server, which SWR doesn't own
+            router.refresh();
+          }),
+      })),
+    });
+    const keyColor = getKeyColorFromPhoto(photo);
     items.push({
       label: appText.admin.sync,
       labelComplex: <span className="inline-flex items-center gap-2">
@@ -154,6 +192,39 @@ export default function AdminPhotoMenu({
         action: () => syncPhotoAction(photo.id)
           .then(() => revalidatePhoto?.(photo.id)),
       }, {
+        label: appText.admin.syncUpdateColor,
+        icon: keyColor
+          ? <ColorDot
+            color={keyColor}
+            includeTooltip={false}
+            size="medium"
+            className="translate-x-[-1px] translate-y-[1px]"
+          />
+          : <IoMdColorFilter
+            size={16}
+            className="translate-x-[-1px]  translate-y-[1px]"
+          />,
+        action: () => storeColorDataForPhotoAction(photo.id, { force: true })
+          .then(result => {
+            revalidatePhoto?.(photo.id);
+            if (result) {
+              toastSuccess(
+                <span className="inline-flex items-center gap-1.5">
+                  {appText.admin.syncUpdateColorSuccess}
+                  <ColorDot
+                    color={result.oldColor}
+                    includeTooltip={false}
+                  />
+                  <FaArrowRight size={10} className="text-dim" />
+                  <ColorDot
+                    color={result.newColor}
+                    includeTooltip={false}
+                  />
+                </span>,
+              );
+            }
+          }),
+      }, {
         label: appText.admin.syncOverwrite,
         icon: <IconWarning className="translate-x-[-1.5px]" />,
         className: 'text-warning *:hover:text-warning *:active:text-warning',
@@ -172,16 +243,13 @@ export default function AdminPhotoMenu({
         size={16}
         className="translate-x-[-1px] translate-y-px"
       />,
-      action: () => new Promise(resolve => {
-        onUploadFinishRef.current = resolve;
-        if (inputRef.current) {
-          inputRef.current.value = '';
-          inputRef.current.click();
-          inputRef.current.oncancel = () => resolve(false);
-        } else {
-          resolve();
-        }
-      }),
+      items: [{
+        label: appText.admin.reuploadReplaceFile,
+        action: () => openReuploadPicker(false),
+      }, {
+        label: appText.admin.reuploadReplaceFileSync,
+        action: () => openReuploadPicker(true),
+      }],
     });
 
     return { items };
@@ -193,8 +261,11 @@ export default function AdminPhotoMenu({
     includeFavorite,
     isFav,
     shouldRedirectFav,
-    redirectPathOnPrivateToggle,
+    visibility,
+    redirectPathForVisibility,
     revalidatePhoto,
+    router,
+    openReuploadPicker,
   ]);
 
   const sectionDelete: MoreMenuSection = useMemo(() => ({
@@ -245,13 +316,57 @@ export default function AdminPhotoMenu({
         }}/>
         <ImageInput
           ref={inputRef}
+          id={`admin-photo-file-${photo.id}`}
           multiple={false}
-          onBlobReady={async ({ blob, extension }) =>
-            uploadPhotoFromClient(blob, extension)
-              .then(updatedStorageUrl =>
-                replacePhotoStorageAction(photo.id, updatedStorageUrl))
-              .then(() => revalidatePhoto?.(photo.id))
-              .finally(onUploadFinishRef.current)}
+          hidden
+          onBlobReady={async ({ blob, extension }) => {
+            const shouldSync = reuploadSyncRef.current;
+            // Menu may already be dismissed (e.g., Safari blurs it
+            // when the file picker opens) so report progress via toast
+            const toastId = toastWaiting(`${appText.admin.uploading} ...`);
+            const preventUnload = (e: BeforeUnloadEvent) => e.preventDefault();
+            window.addEventListener('beforeunload', preventUnload);
+            return uploadPhotoFromClient(blob, extension, {
+              onProgress: (loaded, total) => toastWaiting(
+                `${appText.admin.uploading} ` +
+                `${Math.round(loaded / total * 100)}%`,
+                Infinity,
+                toastId,
+              ),
+            })
+              .then(updatedStorageUrl => {
+                toastWaiting(
+                  shouldSync
+                    ? appText.admin.reuploadReplacingSync
+                    : appText.admin.reuploadReplacing,
+                  Infinity,
+                  toastId,
+                );
+                return replacePhotoStorageAction(
+                  photo.id,
+                  updatedStorageUrl,
+                  shouldSync,
+                );
+              })
+              .then(() => {
+                revalidatePhoto?.(photo.id);
+                toastSuccess(
+                  photo.title
+                    ? appText.admin.reuploadSuccessTitled(photo.title)
+                    : appText.admin.reuploadSuccess,
+                  undefined,
+                  toastId,
+                );
+              })
+              .catch(error => {
+                console.error(error);
+                toastWarning(appText.admin.reuploadFailure, undefined, toastId);
+              })
+              .finally(() => {
+                window.removeEventListener('beforeunload', preventUnload);
+                onUploadFinishRef.current?.();
+              });
+          }}
           shouldResize={!PRESERVE_ORIGINAL_UPLOADS}
         />
       </>

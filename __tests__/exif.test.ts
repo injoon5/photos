@@ -1,10 +1,51 @@
-import { convertApertureValueToFNumber } from '@/utility/exif';
+import {
+  convertApertureValueToFNumber,
+  getDimensionsFromExif,
+} from '@/utility/exif';
+import { OrientationTypes } from 'ts-exif-parser';
 import {
   formatExposureTime,
   formatExposureCompensation,
 } from '@/utility/exif-format';
+import { parseCachedPhotoDates, parsePhotoFromDb } from '@/photo';
 
 describe('EXIF', () => {
+  describe('dimensions from exif', () => {
+    it('fall back to DEFAULT_ASPECT_RATIO when exifr is undefined', () => {
+      // Regression: HEIC uploads can reach a partial parse where exifr is
+      // undefined; previously `exifr.ImageWidth` threw a TypeError.
+      const { width, height, aspectRatio } = getDimensionsFromExif(
+        { tags: {}, imageSize: undefined } as any,
+        undefined,
+      );
+      expect(width).toBeUndefined();
+      expect(height).toBeUndefined();
+      expect(aspectRatio).toBe(1.5); // DEFAULT_ASPECT_RATIO
+    });
+
+    it('use imageSize when present even if exifr is undefined', () => {
+      const { width, height, aspectRatio } = getDimensionsFromExif(
+        {
+          tags: { Orientation: OrientationTypes.TOP_LEFT },
+          imageSize: { width: 4032, height: 3024 } as any,
+        } as any,
+        undefined,
+      );
+      expect(width).toBe(4032);
+      expect(height).toBe(3024);
+      expect(aspectRatio).toBeCloseTo(4 / 3);
+    });
+
+    it('use exifr ImageWidth/Height as fallback when imageSize missing', () => {
+      const { width, height, aspectRatio } = getDimensionsFromExif(
+        { tags: { Orientation: OrientationTypes.TOP_LEFT } } as any,
+        { ImageWidth: 1200, ImageHeight: 800 },
+      );
+      expect(width).toBe(1200);
+      expect(height).toBe(800);
+      expect(aspectRatio).toBeCloseTo(1.5);
+    });
+  });
   describe('converts', () => {
     it('aperture value to f-number', () => {
       expect(convertApertureValueToFNumber('0')).toBe('1');
@@ -70,6 +111,42 @@ describe('EXIF', () => {
       expect(formatExposureCompensation(-1.119)).toBe('-1.12ev');
       expect(formatExposureCompensation(-1.112340989)).toBe('-1.11ev');
       expect(formatExposureCompensation(1.9595959)).toBe('+1.96ev');
+    });
+    it('recovers camera third stops rounded to tenths when requested', () => {
+      const options = { thirdsRoundedToTenths: true };
+      expect(formatExposureCompensation(-0.3, options)).toBe('-1/3ev');
+      expect(formatExposureCompensation(-0.7, options)).toBe('-2/3ev');
+      expect(formatExposureCompensation(0.3, options)).toBe('+1/3ev');
+      expect(formatExposureCompensation(0.7, options)).toBe('+2/3ev');
+      expect(formatExposureCompensation(-1.3, options)).toBe('-1 1/3ev');
+      expect(formatExposureCompensation(1.7, options)).toBe('+1 2/3ev');
+      expect(formatExposureCompensation(0.5, options)).toBe('+1/2ev');
+      expect(formatExposureCompensation(0.1, options)).toBe('+1/10ev');
+      expect(formatExposureCompensation(0.3)).toBe('+3/10ev');
+      expect(formatExposureCompensation(-0.7)).toBe('-7/10ev');
+    });
+    it('fixes rounded OM exposure labels on fresh and cached photos', () => {
+      for (const make of ['OM Digital Solutions', 'OLYMPUS CORPORATION']) {
+        const photo = parsePhotoFromDb({
+          id: 'exposure', url: 'https://example.test/photo.jpg',
+          extension: 'jpg',
+          make, model: 'PEN', aspectRatio: 4 / 3,
+          tags: [],
+          exposureCompensation: -0.7,
+          takenAt: new Date(), createdAt: new Date(), updatedAt: new Date(),
+          takenAtNaive: '2026-10-20 12:00:00',
+        });
+        expect(photo.exposureCompensationFormatted).toBe('-2/3ev');
+        expect(photo.exposureCompensation).toBe(-0.7);
+        const cached = parseCachedPhotoDates({
+          ...photo, exposureCompensationFormatted: '-7/10ev',
+        });
+        expect(cached.exposureCompensationFormatted).toBe('-2/3ev');
+        const otherCamera = parseCachedPhotoDates({
+          ...photo, make: 'FUJIFILM',
+        });
+        expect(otherCamera.exposureCompensationFormatted).toBe('-7/10ev');
+      }
     });
   });
 });

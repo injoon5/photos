@@ -4,7 +4,7 @@ import { clsx } from 'clsx/lite';
 import AppGrid from '../components/AppGrid';
 import ThemeSwitcher from '@/app/ThemeSwitcher';
 import Link from 'next/link';
-import { SHOW_REPO_LINK } from '@/app/config';
+import { SHOW_TEMPLATE_ATTRIBUTION } from '@/app/config';
 import RepoLink from '../components/RepoLink';
 import { usePathname } from 'next/navigation';
 import { PATH_ADMIN_PHOTOS, isPathAdmin, isPathSignIn } from './path';
@@ -39,7 +39,7 @@ export default function Footer() {
           type={!shouldAnimate ? 'none' : 'bottom'}
           distanceOffset={10}
           items={showFooter
-            ? [<div
+            ? [<footer
               key="footer"
               className={clsx(
                 'flex items-center gap-1',
@@ -66,7 +66,7 @@ export default function Footer() {
                   </>
                   : isCheckingAuth
                     ? <Spinner size={16} className="translate-y-[2px]" />
-                    : SHOW_REPO_LINK
+                    : SHOW_TEMPLATE_ATTRIBUTION
                       ? <RepoLink />
                       : <Link href={PATH_ADMIN_PHOTOS}>
                         {appText.nav.admin}
@@ -75,7 +75,7 @@ export default function Footer() {
               <div className="flex items-center h-10 shrink-0">
                 <ThemeSwitcher />
               </div>
-            </div>]
+            </footer>]
             : []}
         />}
     />
