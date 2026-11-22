@@ -25,19 +25,17 @@ export function proxy(req: NextRequest, res:NextResponse) {
 }
 
 export const config = {
-  // Excludes:
-  // - /api + /api/auth*
-  // - /_next/static*
-  // - /_next/image*
-  // - /favicon.ico + /favicons/*
-  // - /grid
-  // - /full
-  // - /library
-  // - / (root)
-  // - /home-image
-  // - /template-image
-  // - /template-image-tight
-  // - /template-url
-  // eslint-disable-next-line @stylistic/max-len
-  matcher: ['/((?!api$|api/auth|_next/static|_next/image|favicon.ico$|favicons/|grid$|full$|library$|home-image$|template-image$|template-image-tight$|template-url$|$).*)'],
+  // Only run where the proxy has work to do: protected paths
+  // (see `isPathProtected`), redirects, and path aliases
+  // (see `getPathAliasTarget`). Every other request, including
+  // cached pages, images, and prefetches, skips the proxy entirely,
+  // so it no longer costs a function invocation.
+  matcher: [
+    '/admin/:path*',
+    '/og/:path*',
+    '/tag/private/:path*',
+    '/library/edit/:path*',
+    '/photos/:path+',
+    '/t/:path+',
+  ],
 };
