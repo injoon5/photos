@@ -1,8 +1,8 @@
-import AnimateItems from '@/components/AnimateItems';
-import Note from '@/components/Note';
 import AppGrid from '@/components/AppGrid';
-import PhotoGrid from '@/photo/PhotoGrid';
+import Note from '@/components/Note';
+import { INFINITE_SCROLL_GRID_INITIAL } from '@/photo';
 import { getPhotosMetaCached, getPhotosNoStore } from '@/photo/cache';
+import PhotoGridHybridContainer from '@/photo/PhotoGridHybridContainer';
 import { absolutePathForTag } from '@/app/path';
 import { TAG_PRIVATE, descriptionForTaggedPhotos, titleForTag } from '@/tag';
 import PrivateHeader from '@/tag/PrivateHeader';
@@ -51,28 +51,28 @@ export default async function PrivateTagPage() {
     photos,
     { count, dateRange },
   ] = await Promise.all([
-    getPhotosNoStore({ hidden: 'only' }),
+    getPhotosNoStore({ hidden: 'only', limit: INFINITE_SCROLL_GRID_INITIAL }),
     getPhotosHiddenMetaCached(),
   ]);
 
   return (
-    <AppGrid
-      contentMain={<div className="space-y-4 mt-4">
-        <AnimateItems
-          type="bottom"
-          items={[<PrivateHeader
-            key="PrivateHeader"
-            {...{ photos, count, dateRange }}
-          />]}
-          animateOnFirstLoadOnly
-        />
-        <div className="space-y-6">
-          <Note animate>
+    <PhotoGridHybridContainer
+      cacheKey={`tag-${TAG_PRIVATE}`}
+      photos={photos}
+      count={count}
+      tag={TAG_PRIVATE}
+      // Keep the note out of the sticky title's box so the title can
+      // stick for the whole grid, and inside the column so it doesn't
+      // stretch across the viewport
+      header={<>
+        <PrivateHeader {...{ photos, count, dateRange }} />
+        <AppGrid
+          className="mb-8"
+          contentMain={<Note animate>
             Visible only to admins (uploads only secure via obscurity)
-          </Note>
-          <PhotoGrid {...{ photos }} />
-        </div>
-      </div>}
+          </Note>}
+        />
+      </>}
     />
   );
 }

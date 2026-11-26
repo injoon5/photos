@@ -13,6 +13,12 @@ import { depluralize, pluralize } from '@/utility/string';
 
 type StaticOutput = 'page' | 'image';
 
+// Returning an empty array (instead of undefined) keeps routes static:
+// nothing is generated at build time, but each path is rendered on its
+// first request and then served from cache until revalidated, rather
+// than being rendered on every request
+const generateOnDemand = async () => [];
+
 const logStaticGenerationDetails = (count: number, content: string) => {
   if (count > 0) {
     const label = pluralize(count, content, undefined, 3);
@@ -37,14 +43,14 @@ export const staticallyGeneratePhotosIfConfigured = (type: StaticOutput) => (
     }
     return photoIds.map(photoId => ({ photoId }));
   }
-  : undefined;
+  : generateOnDemand;
 
 export const staticallyGenerateCategoryIfConfigured = <T, K>(
   key: CategoryKey,
   type: StaticOutput,
   getData: () => Promise<T[]>,
   formatData: (data: T[]) => K[],
-): (() => Promise<K[]>) | undefined =>
+): (() => Promise<K[]>) =>
   CATEGORY_VISIBILITY.includes(key) && (
     (type === 'page' && STATICALLY_OPTIMIZED_PHOTO_CATEGORIES) ||
     (type === 'image' && STATICALLY_OPTIMIZED_PHOTO_CATEGORY_OG_IMAGES)
@@ -64,4 +70,4 @@ export const staticallyGenerateCategoryIfConfigured = <T, K>(
       }
       return formatData(data);
     }
-    : undefined;
+    : generateOnDemand;

@@ -8,6 +8,7 @@ import {
   getSignedUrlForUrl,
   getStorageUrlsForPrefix,
   uploadFileFromClient,
+  ClientUploadOptions,
 } from '@/platforms/storage';
 import { Photo } from '..';
 import { fetchBase64ImageFromUrl } from '@/utility/image';
@@ -85,14 +86,16 @@ export const getStoragePhotoUrls = () =>
 export const uploadTempPhotoFromClient = (
   file: File | Blob,
   extension = EXTENSION_DEFAULT,
+  options?: ClientUploadOptions,
 ) =>
-  uploadFileFromClient(file, PREFIX_UPLOAD, extension);
+  uploadFileFromClient(file, PREFIX_UPLOAD, extension, true, options);
 
 export const uploadPhotoFromClient = (
   file: File | Blob,
   extension = EXTENSION_DEFAULT,
+  options?: ClientUploadOptions,
 ) =>
-  uploadFileFromClient(file, PREFIX_PHOTO, extension);
+  uploadFileFromClient(file, PREFIX_PHOTO, extension, true, options);
 
 const getSuffixFromNextImageSize = (nextSize: NextImageSize) =>
   OPTIMIZED_FILE_SIZES.find(({ size }) => size === nextSize)?.suffix
@@ -157,9 +160,9 @@ export const getDataUrlsForPhotos = async (
   optimizedSuffix: OptimizedSuffix,
   nextImageWidth: NextImageSize,
   addBypassSecret: boolean,
-): Promise<{ id: string, urlData: string }[]> =>
+): Promise<{ id: string, urlData: string }[] | undefined> =>
   Promise.all(photos
-    .map(async({ id, url }) => {
+    .map(async ({ id, url }) => {
       // Check for optimized image first
       const optimizedUrl = await getSignedUrlForUrl(
         getOptimizedPhotoUrlForSuffix(url, optimizedSuffix),
@@ -183,4 +186,4 @@ export const getDataUrlsForPhotos = async (
     .then(urls => urls.every(({ urlData }) => Boolean(urlData))
       ? urls as { id: string, urlData: string }[]
       // If any url is undefined, return an empty array
-      : []);
+      : undefined);

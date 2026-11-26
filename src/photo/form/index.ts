@@ -1,7 +1,12 @@
 import { DEFAULT_ASPECT_RATIO, Photo, PhotoDbInsert } from '..';
 import {
+  convertTakenAtNaiveToUtc,
+  convertTakenAtToNaive,
   generateLocalNaivePostgresString,
   generateLocalPostgresString,
+  getTakenAtOffsetMs,
+  validateNaivePostgresDateString,
+  validatePostgresDateString,
   validationMessageNaivePostgresDateString,
   validationMessagePostgresDateString,
 } from '@/utility/date';
@@ -9,23 +14,32 @@ import { roundToNumber } from '@/utility/number';
 import { convertStringToArray, parameterize } from '@/utility/string';
 import { generateNanoid } from '@/utility/nanoid';
 import { TAG_FAVS, getValidationMessageForTags } from '@/tag';
-import { MAKE_FUJIFILM } from '@/platforms/fujifilm';
-import { FujifilmRecipe } from '@/platforms/fujifilm/recipe';
+import { isMakeFujifilm } from '@/platforms/fujifilm';
+import { isOmSystemCamera } from '@/platforms/om-system/recipe';
+import { isOmRecipeData, parseRecipeData } from '@/recipe/serialization';
 import { ReactNode } from 'react';
 import { FujifilmSimulation } from '@/platforms/fujifilm/simulation';
 import { SelectMenuOptionType } from '@/components/SelectMenuOption';
-import { COLOR_SORT_ENABLED } from '@/app/config';
+import {
+  applyAiColorToColorData,
+  convertJsonStringToOklch,
+  convertOklchToJsonString,
+  generateColorDataFromString,
+} from '@/photo/color/client';
+import { calculateColorSort } from '@/photo/color/sort';
 
 type VirtualFields =
   'albums' |
   'visibility' |
   'favorite' |
-  'applyRecipeTitleGlobally' |
-  'shouldStripGpsData';
+  'shouldStripGpsData' |
+  'locationPlace' |
+  'locationDisplayName' |
+  'keyColor';
 
 export type FormFields = keyof PhotoDbInsert | VirtualFields;
 
-export type PhotoFormData = Record<FormFields, string>
+export type PhotoFormData = Record<FormFields, string>;
 
 export type FieldSetType =
   'text' |
@@ -69,6 +83,7 @@ export type FormMeta = {
   tagOptionsLimit?: number
   tagOptionsLimitValidationMessage?: string
   tagOptionsShouldParameterize?: boolean
+  tagOptionsShouldRevealRawText?: boolean
   isJson?: boolean
   staticValue?: string
 };
@@ -76,12 +91,40 @@ export type FormMeta = {
 const STRING_MAX_LENGTH_SHORT = 255;
 const STRING_MAX_LENGTH_LONG  = 1000;
 
+const hasRecipeFields = ({ make, recipeData }: Partial<PhotoFormData>) =>
+  isMakeFujifilm(make) ||
+  isOmSystemCamera(make) ||
+  isOmRecipeData(parseRecipeData(recipeData));
+
+// Omit options entirely (an empty array still renders the dropdown)
+const tagOptionsForAutocomplete = (
+  options?: AnnotatedTag[],
+): Pick<
+  FormMeta,
+  'tagOptions' |
+  'tagOptionsLimit' |
+  'tagOptionsShouldParameterize' |
+  'tagOptionsShouldRevealRawText'
+> => options && options.length > 0
+  ? {
+    tagOptions: options,
+    tagOptionsLimit: 1,
+    tagOptionsShouldParameterize: false,
+    tagOptionsShouldRevealRawText: true,
+  }
+  : {};
+
 const FORM_METADATA = (
   tagOptions?: AnnotatedTag[],
   recipeOptions?: AnnotatedTag[],
   filmOptions?: AnnotatedTag[],
-  aiTextGeneration?: boolean,
+  cameraMakeOptions?: AnnotatedTag[],
+  cameraModelOptions?: AnnotatedTag[],
+  lensMakeOptions?: AnnotatedTag[],
+  lensModelOptions?: AnnotatedTag[],
+  hasAiContentGeneration?: boolean,
   shouldStripGpsData?: boolean,
+  hasLocationServices?: boolean,
 ): Record<keyof PhotoFormData, FormMeta> => ({
   title: {
     section: 'text',
@@ -107,17 +150,25 @@ const FORM_METADATA = (
     label: 'semantic description (not visible)',
     capitalize: true,
     validateStringMaxLength: STRING_MAX_LENGTH_LONG,
-    shouldHide: () => !aiTextGeneration,
+    shouldHide: () => !hasAiContentGeneration,
+  },
+  keyColor: {
+    section: 'text',
+    label: 'key color',
+    excludeFromInsert: true,
+    shouldHide: () => !hasAiContentGeneration,
+    validate: value => value && !convertJsonStringToOklch(value)
+      ? 'Invalid color'
+      : undefined,
+  },
+  visibility: {
+    section: 'text',
+    label: 'visibility',
+    excludeFromInsert: true,
   },
   albums: {
     section: 'text',
     label: 'albums',
-    excludeFromInsert: true,
-  },
-  visibility: {
-    section: 'text',
-    type: 'text',
-    label: 'visibility',
     excludeFromInsert: true,
   },
   excludeFromFeeds: {
@@ -139,10 +190,12 @@ const FORM_METADATA = (
   make: {
     section: 'exif',
     label: 'camera make',
+    ...tagOptionsForAutocomplete(cameraMakeOptions),
   },
   model: {
     section: 'exif',
     label: 'camera model',
+    ...tagOptionsForAutocomplete(cameraModelOptions),
   },
   film: {
     section: 'exif',
@@ -159,21 +212,7 @@ const FORM_METADATA = (
     tagOptionsLimit: 1,
     spellCheck: false,
     capitalize: false,
-    shouldHide: ({ make }) => make !== MAKE_FUJIFILM,
-  },
-  applyRecipeTitleGlobally: {
-    section: 'exif',
-    label: 'apply recipe title globally',
-    type: 'checkbox',
-    excludeFromInsert: true,
-    hideModificationStatus: true,
-    shouldHide: ({ make, recipeTitle, recipeData }, changedFormKeys) =>
-      !(
-        make === MAKE_FUJIFILM &&
-        recipeData &&
-        recipeTitle &&
-        changedFormKeys?.includes('recipeTitle')
-      ),
+    shouldHide: form => !hasRecipeFields(form),
   },
   recipeData: {
     section: 'exif',
@@ -181,7 +220,7 @@ const FORM_METADATA = (
     label: 'recipe data',
     spellCheck: false,
     capitalize: false,
-    shouldHide: ({ make }) => make !== MAKE_FUJIFILM,
+    shouldHide: form => !hasRecipeFields(form),
     isJson: true,
     validate: value => {
       let validationMessage = undefined;
@@ -203,19 +242,51 @@ const FORM_METADATA = (
     section: 'exif',
     label: 'focal length 35mm-equivalent',
   },
-  lensMake: { section: 'exif', label: 'lens make' },
-  lensModel: { section: 'exif', label: 'lens model' },
+  lensMake: {
+    section: 'exif',
+    label: 'lens make',
+    ...tagOptionsForAutocomplete(lensMakeOptions),
+  },
+  lensModel: {
+    section: 'exif',
+    label: 'lens model',
+    ...tagOptionsForAutocomplete(lensModelOptions),
+  },
   fNumber: { section: 'exif', label: 'aperture' },
   iso: { section: 'exif', label: 'ISO' },
   exposureTime: { section: 'exif', label: 'exposure time' },
   exposureCompensation: { section: 'exif', label: 'exposure compensation' },
+  latitude: { section: 'exif', label: 'latitude' },
+  longitude: { section: 'exif', label: 'longitude' },
+  locationPlace: {
+    section: 'exif',
+    label: 'location',
+    excludeFromInsert: true,
+    hideModificationStatus: true,
+    shouldHide: () => !hasLocationServices,
+  },
+  locationDisplayName: {
+    section: 'exif',
+    label: 'location display name',
+    excludeFromInsert: true,
+    shouldHide: () => !hasLocationServices,
+  },
+  location: {
+    section: 'exif',
+    label: 'location data',
+    type: hasLocationServices
+      ? 'textarea'
+      : 'hidden',
+    isJson: true,
+    readOnly: true,
+    spellCheck: false,
+    capitalize: false,
+  },
   locationName: {
     section: 'exif',
     label: 'location name',
     shouldHide: () => true,
   },
-  latitude: { section: 'exif', label: 'latitude' },
-  longitude: { section: 'exif', label: 'longitude' },
   takenAt: {
     section: 'exif',
     label: 'taken at',
@@ -264,21 +335,19 @@ const FORM_METADATA = (
     label: 'aspect ratio',
     readOnly: true,
   },
-  priorityOrder: {
-    section: 'misc',
-    label: 'priority order',
-  },
   colorData: {
     section: 'misc',
     type: 'textarea',
     label: 'color data',
     isJson: true,
-    shouldHide: () => !COLOR_SORT_ENABLED,
   },
   colorSort: {
     section: 'misc',
     label: 'color sort',
-    shouldHide: () => !COLOR_SORT_ENABLED,
+  },
+  priorityOrder: {
+    section: 'misc',
+    label: 'priority order',
   },
   shouldStripGpsData: {
     section: 'misc',
@@ -292,7 +361,45 @@ const FORM_METADATA = (
 export const FIELDS_TO_NOT_TOAST: (keyof PhotoFormData)[] = [
   'colorData',
   'colorSort',
+  'keyColor',
 ];
+
+const applyKeyColorToColorFields = (
+  colorDataString?: string,
+  keyColor?: string,
+) => {
+  const colorData = generateColorDataFromString(colorDataString);
+  if (!colorData) { return; }
+  const ai = keyColor
+    ? convertJsonStringToOklch(keyColor)
+    : undefined;
+  if (keyColor && !ai) { return; }
+  const updated = applyAiColorToColorData(colorData, ai);
+  return {
+    colorData: JSON.stringify(updated),
+    colorSort: `${calculateColorSort(updated)}`,
+  };
+};
+
+export const formDataWithUpdatedKeyColor = (
+  data: Partial<PhotoFormData>,
+  keyColor: string,
+): Partial<PhotoFormData> => ({
+  ...data,
+  keyColor,
+  ...applyKeyColorToColorFields(data.colorData, keyColor),
+});
+
+export const formDataWithUpdatedColorData = (
+  data: Partial<PhotoFormData>,
+  colorData: string,
+): Partial<PhotoFormData> => ({
+  ...data,
+  colorData,
+  keyColor: convertOklchToJsonString(
+    generateColorDataFromString(colorData)?.ai,
+  ),
+});
 
 export const FIELDS_WITH_JSON = Object.entries(FORM_METADATA())
   .filter(([_, meta]) => meta.isJson)
@@ -342,7 +449,7 @@ export const isFormValid = (formData: Partial<PhotoFormData>) =>
     ([key, { required, validate, validateStringMaxLength }]) =>
       (!required || Boolean(formData[key])) &&
       (!validate?.(formData[key])) &&
-      // eslint-disable-next-line max-len
+      // eslint-disable-next-line @stylistic/max-len
       (!validateStringMaxLength || (formData[key]?.length ?? 0) <= validateStringMaxLength),
   );
 
@@ -371,6 +478,8 @@ export const convertPhotoToFormData = (photo: Photo): PhotoFormData => {
         return JSON.stringify(value);
       case 'colorData':
         return JSON.stringify(value);
+      case 'location':
+        return value ? JSON.stringify(value) : undefined;
       default:
         return value !== undefined && value !== null
           ? value.toString()
@@ -382,6 +491,9 @@ export const convertPhotoToFormData = (photo: Photo): PhotoFormData => {
     [key]: valueForKey(key as keyof Photo, value),
   }), {
     favorite: photo.tags.includes(TAG_FAVS) ? 'true' : 'false',
+    locationDisplayName:
+      photo.location?.nameFormatted ?? photo.location?.name ?? '',
+    keyColor: convertOklchToJsonString(photo.colorData?.ai),
   } as PhotoFormData);
 };
 
@@ -399,6 +511,9 @@ export const convertFormDataToPhotoDbInsert = (
   if (photoForm.favorite === 'true') {
     tags.push(TAG_FAVS);
   }
+  const locationDisplayName = photoForm.locationDisplayName;
+  const keyColor = photoForm.keyColor;
+  const hasKeyColorField = typeof keyColor === 'string' && keyColor.length > 0;
 
   // Parse FormData:
   // - remove server action ID
@@ -418,10 +533,20 @@ export const convertFormDataToPhotoDbInsert = (
     }
   });
 
+  if (hasKeyColorField) {
+    const colorFields = applyKeyColorToColorFields(
+      photoForm.colorData,
+      keyColor,
+    );
+    if (colorFields) {
+      photoForm.colorData = colorFields.colorData;
+      photoForm.colorSort = colorFields.colorSort;
+    }
+  }
+
   return {
     ...(photoForm as PhotoFormData & {
       film?: FujifilmSimulation
-      recipeData?: FujifilmRecipe
     }),
     ...!photoForm.id && { id: generateNanoid() },
     // Delete array field when empty
@@ -439,12 +564,10 @@ export const convertFormDataToPhotoDbInsert = (
     aspectRatio: photoForm.aspectRatio
       ? roundToNumber(parseFloat(photoForm.aspectRatio), 6)
       : DEFAULT_ASPECT_RATIO,
-    focalLength: photoForm.focalLength
-      ? parseInt(photoForm.focalLength)
-      : undefined,
-    focalLengthIn35MmFormat: photoForm.focalLengthIn35MmFormat
-      ? parseInt(photoForm.focalLengthIn35MmFormat)
-      : undefined,
+    // Focal lengths of 0 (or unparseable values) indicate unknown data
+    focalLength: parseInt(photoForm.focalLength ?? '') || undefined,
+    focalLengthIn35MmFormat:
+      parseInt(photoForm.focalLengthIn35MmFormat ?? '') || undefined,
     fNumber: photoForm.fNumber
       ? parseFloat(photoForm.fNumber)
       : undefined,
@@ -454,6 +577,12 @@ export const convertFormDataToPhotoDbInsert = (
     longitude: photoForm.longitude
       ? parseFloat(photoForm.longitude)
       : undefined,
+    ...photoForm.location && {
+      location: {
+        ...JSON.parse(photoForm.location),
+        ...locationDisplayName && { nameFormatted: locationDisplayName },
+      },
+    },
     iso: photoForm.iso
       ? parseInt(photoForm.iso)
       : undefined,
@@ -486,6 +615,39 @@ export const getChangedFormFields = (
       (current[key as keyof PhotoFormData] ?? ''),
     ) as (keyof PhotoFormData)[];
 };
+
+// Editing one taken-at field shifts the other by the same amount,
+// preserving timezone offset, so sort order (UTC) matches display (naive)
+export const formDataWithSyncedTakenAt = (
+  form: Partial<PhotoFormData>,
+  key: 'takenAt' | 'takenAtNaive',
+  value: string,
+  offsetMs?: number,
+): Partial<PhotoFormData> => {
+  const formUpdated = { ...form, [key]: value };
+  if (offsetMs === undefined) { return formUpdated; }
+  if (key === 'takenAt' && validatePostgresDateString(value)) {
+    formUpdated.takenAtNaive = convertTakenAtToNaive(value, offsetMs);
+  } else if (
+    key === 'takenAtNaive' &&
+    validateNaivePostgresDateString(value)
+  ) {
+    formUpdated.takenAt = convertTakenAtNaiveToUtc(value, offsetMs);
+  }
+  return formUpdated;
+};
+
+// Offset between taken-at fields, keeping previous offset while either
+// field is partially typed (undefined when fields are inconsistent)
+export const getTakenAtOffsetMsForForm = (
+  { takenAt, takenAtNaive }: Partial<PhotoFormData>,
+  offsetMsPrevious?: number,
+) => (
+  validatePostgresDateString(takenAt) &&
+  validateNaivePostgresDateString(takenAtNaive)
+)
+  ? getTakenAtOffsetMs(takenAt, takenAtNaive)
+  : offsetMsPrevious;
 
 export const generateTakenAtFields = (
   form?: Partial<PhotoFormData>,

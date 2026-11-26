@@ -3,6 +3,7 @@
 
 import {
   ComponentProps,
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -21,9 +22,18 @@ import {
   getChangedFormFields,
   getFormErrors,
   isFormValid,
+  formDataWithUpdatedColorData,
+  formDataWithUpdatedKeyColor,
+  formDataWithSyncedTakenAt,
+  getTakenAtOffsetMsForForm,
 } from '.';
 import FieldsetWithStatus from '@/components/FieldsetWithStatus';
-import { createPhotoAction, updatePhotoAction } from '../actions';
+import Checkbox from '@/components/Checkbox';
+import {
+  createPhotoAction,
+  getAiColorAction,
+  updatePhotoAction,
+} from '../actions';
 import SubmitButtonWithStatus from '@/components/SubmitButtonWithStatus';
 import Link from 'next/link';
 import { clsx } from 'clsx/lite';
@@ -38,16 +48,33 @@ import ImageWithFallback from '@/components/image/ImageWithFallback';
 import { Tags, convertTagsForForm } from '@/tag';
 import { AiContent } from '../ai/useAiImageQueries';
 import AiButton from '../ai/AiButton';
+import { HiSparkles } from 'react-icons/hi';
+import LoaderButton from '@/components/primitives/LoaderButton';
 import Spinner from '@/components/Spinner';
 import usePreventNavigation from '@/utility/usePreventNavigation';
 import { useAppState } from '@/app/AppState';
 import UpdateBlurDataButton from '../UpdateBlurDataButton';
 import { BLUR_ENABLED, IS_PREVIEW } from '@/app/config';
+import PlaceInput from '@/place/PlaceInput';
+import { convertPlaceToAutocomplete, Place } from '@/place';
 import ErrorNote from '@/components/ErrorNote';
 import { convertRecipesForForm, Recipes } from '@/recipe';
 import deepEqual from 'fast-deep-equal/es6/react';
-import ApplyRecipeTitleGloballyCheckbox from './ApplyRecipesGloballyCheckbox';
+import RecipeTitleHashCheckbox from './RecipeTitleHashCheckbox';
+import RecipeTitleRenameWarning from './RecipeTitleRenameWarning';
+import { canCreateRecipeHashKey, isRecipeHashKey } from '@/recipe/key';
+import FieldsetRecipeData from './FieldsetRecipeData';
 import { convertFilmsForForm, Films } from '@/film';
+import {
+  Cameras,
+  convertCameraMakesForForm,
+  convertCameraModelsForForm,
+} from '@/camera';
+import {
+  Lenses,
+  convertLensMakesForForm,
+  convertLensModelsForForm,
+} from '@/lens';
 import { isMakeFujifilm } from '@/platforms/fujifilm';
 import PhotoFilmIcon from '@/film/PhotoFilmIcon';
 import FieldsetFavs from './FieldsetFavs';
@@ -56,11 +83,23 @@ import IconAddUpload from '@/components/icons/IconAddUpload';
 import { didVisibilityChange } from '../visibility';
 import FieldsetVisibility from '../visibility/FieldsetVisibility';
 import PhotoColors from '../color/PhotoColors';
-import { generateColorDataFromString } from '../color/client';
+import ColorDot from '../color/ColorDot';
+import {
+  convertJsonStringToOklch,
+  convertOklchToJsonString,
+  generateColorDataFromString,
+  getKeyColorFromColorData,
+} from '../color/client';
 import { capitalize } from '@/utility/string';
 import AnchorSections from '@/components/AnchorSections';
 import useIsVisible from '@/utility/useIsVisible';
 import useHash from '@/utility/useHash';
+import useMediaQuery from '@/utility/useMediaQuery';
+import {
+  LAYOUT_CLASS_MAIN,
+  LAYOUT_CLASS_SHELL_X,
+  LAYOUT_MAIN,
+} from '@/app/layout-metrics';
 import { getOptimizedPhotoUrlForManipulation } from '../storage';
 import {
   getFileNamePartsFromStorageUrl,
@@ -71,10 +110,22 @@ import { TbPhoto } from 'react-icons/tb';
 import { Albums } from '@/album';
 import FieldsetAlbum from '@/album/FieldsetAlbum';
 import Form from 'next/form';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import DateTimePicker from '@/components/DateTimePicker';
 
 const THUMBNAIL_SIZE = 300;
+/** Form cap. The floating thumb is placed to the right of this. */
+const FORM_MAX_WIDTH_PX = 38 * 16;
+/**
+ * The floating thumb used to sit 3rem from the form. Most of that gap is
+ * now thumb size (more than half); 1rem remains so the two don't touch.
+ */
+const FORM_THUMB_GAP_PX = 16;
+const FLOATING_THUMB_SIZE = THUMBNAIL_SIZE + (3 * 16 - FORM_THUMB_GAP_PX);
+/** Resting offset from the viewport top (`top-8`). */
+const FLOATING_THUMB_TOP_PX = 32;
+/** Entrance rise (`-translate-y-4`), kept inside the clip box. */
+const FLOATING_THUMB_RISE_PX = 16;
 
 export default function PhotoForm({
   type = 'create',
@@ -87,8 +138,11 @@ export default function PhotoForm({
   uniqueTags,
   uniqueRecipes,
   uniqueFilms,
+  uniqueCameras,
+  uniqueLenses,
   aiContent,
   shouldStripGpsData,
+  hasLocationServices,
   onTitleChange,
   onFormDataChange,
   onFormStatusChange,
@@ -103,14 +157,15 @@ export default function PhotoForm({
   uniqueTags: Tags
   uniqueRecipes: Recipes
   uniqueFilms: Films
+  uniqueCameras?: Cameras
+  uniqueLenses?: Lenses
   aiContent?: AiContent
   shouldStripGpsData?: boolean
+  hasLocationServices?: boolean
   onTitleChange?: (updatedTitle: string) => void
   onFormDataChange?: (formData: Partial<PhotoFormData>) => void,
   onFormStatusChange?: (pending: boolean) => void
 }) {
-  const router = useRouter();
-
   const redirectParam = useSearchParams().get(PARAM_REDIRECT);
 
   const [formData, setFormData] =
@@ -119,12 +174,21 @@ export default function PhotoForm({
     useState(getFormErrors(initialPhotoForm));
   const [formActionErrorMessage, setFormActionErrorMessage] = useState('');
 
+  // Last known timezone offset between taken-at fields,
+  // remembered so partially typed dates still sync once valid
+  const [takenAtOffsetMs, setTakenAtOffsetMs] = useState(() =>
+    getTakenAtOffsetMsForForm(initialPhotoForm));
+  const [shouldSyncTakenAt, setShouldSyncTakenAt] = useState(true);
+  const canSyncTakenAt = takenAtOffsetMs !== undefined;
+
   const [detectedFilm, setDetectedFilm] =
     useState(initialPhotoForm.film);
 
   const [albumTitles, setAlbumTitles] = useState(photoAlbumTitles
     .sort((a, b) => a.localeCompare(b))
     .join(','));
+  const [isLoadingPlace, setIsLoadingPlace] = useState(false);
+  const [isLoadingKeyColor, setIsLoadingKeyColor] = useState(false);
 
   const areAlbumTitlesModified = albumTitles !== photoAlbumTitles
     .sort((a, b) => a.localeCompare(b))
@@ -149,7 +213,8 @@ export default function PhotoForm({
   const canFormBeSubmitted =
     (type === 'create' || formHasChanged) &&
     isFormValid(formData) &&
-    !aiContent?.isLoading;
+    !aiContent?.isLoading &&
+    !isLoadingKeyColor;
 
   // Update form when EXIF data
   // is refreshed by parent
@@ -176,9 +241,17 @@ export default function PhotoForm({
             }
           });
 
+        const colorData = generateColorDataFromString(
+          updatedExifData?.colorData,
+        );
+        const keyColor = convertOklchToJsonString(
+          getKeyColorFromColorData(colorData),
+        );
+
         return {
           ...currentForm,
           ...updatedExifData,
+          ...updatedExifData?.colorData !== undefined && { keyColor },
         };
       });
 
@@ -198,6 +271,26 @@ export default function PhotoForm({
   }, [updatedExifData]);
 
   const url = formData.url ?? '';
+
+  const regenerateKeyColor = useCallback(async () => {
+    if (!url) { return; }
+    setIsLoadingKeyColor(true);
+    try {
+      const ai = await getAiColorAction(url);
+      if (ai) {
+        setFormData(data => formDataWithUpdatedKeyColor(
+          data,
+          convertOklchToJsonString(ai),
+        ));
+      } else {
+        toastWarning('Could not generate key color');
+      }
+    } catch (error: any) {
+      toastWarning(error.message || 'Could not generate key color');
+    } finally {
+      setIsLoadingKeyColor(false);
+    }
+  }, [url]);
 
   useEffect(() => {
     if (updatedBlurData) {
@@ -247,6 +340,8 @@ export default function PhotoForm({
         return aiContent?.isLoadingTags;
       case 'semanticDescription':
         return aiContent?.isLoadingSemantic;
+      case 'keyColor':
+        return isLoadingKeyColor;
       default:
         return false;
     }
@@ -285,6 +380,21 @@ export default function PhotoForm({
             aiContent={aiContent}
             requestFields={['semantic']}
             shouldConfirm={Boolean(formData.semanticDescription)}
+          />;
+        case 'keyColor':
+          return <LoaderButton
+            tabIndex={-1}
+            icon={<HiSparkles size={16} />}
+            className="h-full"
+            isLoading={isLoadingKeyColor}
+            onClick={() => {
+              if (
+                !formData.keyColor ||
+                confirm('Are you sure you want to overwrite existing content?')
+              ) {
+                regenerateKeyColor();
+              }
+            }}
           />;
         case 'blurData':
           return shouldDebugImageFallbacks && type === 'edit' && formData.url
@@ -353,6 +463,13 @@ export default function PhotoForm({
       !shouldDebugImageFallbacks
     ) {
       return true;
+    } else if (
+      hasLocationServices &&
+      (key === 'location' || key === 'locationDisplayName') &&
+      !formData.location &&
+      !isLoadingPlace
+    ) {
+      return true;
     } else {
       return (
         (hideIfEmpty && !formData[key]) ||
@@ -361,13 +478,37 @@ export default function PhotoForm({
     }
   };
 
-  const onMatchResults = useCallback((didFindMatchingPhotos: boolean) => {
+  // Recipe data copied in from a chosen title can be replaced by subsequent
+  // titles, and is never used to search for photos needing that title
+  const [copiedRecipeData, setCopiedRecipeData] = useState<string>();
+
+  const initialPlace = useMemo(() => {
+    try {
+      return convertPlaceToAutocomplete(
+        initialPhotoForm.location
+          ? JSON.parse(initialPhotoForm.location) as Place
+          : undefined,
+      );
+    } catch {
+      return undefined;
+    }
+  }, [initialPhotoForm.location]);
+
+  const setPlace = useCallback((place?: Place) => {
     setFormData(data => ({
       ...data,
-      applyRecipeTitleGlobally: didFindMatchingPhotos
-        ? 'true'
-        : 'false',
+      location: place ? JSON.stringify(place) : '',
+      locationDisplayName: place?.nameFormatted ?? place?.name ?? '',
     }));
+  }, []);
+
+  const didCopyRecipeData =
+    Boolean(formData.recipeData) &&
+    formData.recipeData === copiedRecipeData;
+
+  const onRecipeDataFound = useCallback((recipeData: string) => {
+    setCopiedRecipeData(recipeData);
+    setFormData(data => ({ ...data, recipeData }));
   }, [setFormData]);
 
   const formContent = useMemo(() =>
@@ -380,27 +521,44 @@ export default function PhotoForm({
         detectedFilm,
         formData.make,
       ),
+      convertCameraMakesForForm(uniqueCameras),
+      convertCameraModelsForForm(uniqueCameras),
+      convertLensMakesForForm(uniqueLenses),
+      convertLensModelsForForm(uniqueLenses),
       aiContent !== undefined,
       shouldStripGpsData,
+      hasLocationServices,
     ), [
     uniqueTags,
     appText,
     uniqueRecipes,
     uniqueFilms,
+    uniqueCameras,
+    uniqueLenses,
     formData.make,
     detectedFilm,
     aiContent,
     shouldStripGpsData,
+    hasLocationServices,
   ]);
 
   const ref = useRef<HTMLImageElement>(null);
   const isThumbnailVisible = useIsVisible({ ref, initiallyVisible: true });
   const thumbnailDimensions =
     getDimensionsFromSize(THUMBNAIL_SIZE, formData.aspectRatio);
-  const thumbnail = (includeRef?: boolean, className?: string) =>
+  const floatingThumbDimensions =
+    getDimensionsFromSize(FLOATING_THUMB_SIZE, formData.aspectRatio);
+  // Stay visible once the viewport is wider than the main column.
+  // Narrower than that, the shell has no side margin to hold it.
+  const canFloatThumb = useMediaQuery(`(min-width: ${LAYOUT_MAIN}px)`);
+  const thumbnail = (
+    includeRef?: boolean,
+    className?: string,
+    dimensions = thumbnailDimensions,
+  ) =>
     <ImageWithFallback
       ref={includeRef ? ref : undefined}
-      alt="Upload"
+      alt={formData.title || 'Photo thumbnail'}
       src={url}
       className={clsx(
         'border rounded-md overflow-hidden',
@@ -409,31 +567,48 @@ export default function PhotoForm({
       )}
       blurDataURL={formData.blurData}
       blurCompatibilityLevel="none"
-      width={thumbnailDimensions.width}
-      height={thumbnailDimensions.height}
-      priority
+      width={dimensions.width}
+      height={dimensions.height}
+      loading="eager"
     />;
 
   return (
     <div className="space-y-4 max-w-[38rem]">
-      <div className="flex gap-2">
+      <div className="relative flex gap-2">
         {thumbnail(true)}
-        <div className={clsx(
-          'max-md:hidden',
-          'fixed top-8 mr-4',
-          // Orient around responsive form fields
-          'left-[77%] min-[850px]:left-[41rem] lg:left-[42rem]',
-          // For some reason, left property cannot target relative ancestor
-          '3xl:left-auto 3xl:translate-x-[41rem]',
-          // Prevent image blocking form button interaction
-          'pointer-events-none',
-        )}>
-          {thumbnail(false, clsx(
-            'opacity-0 -translate-y-4',
-            !isThumbnailVisible &&
-              'opacity-100 translate-y-0 transition-all duration-300',
-          ))}
-        </div>
+        {canFloatThumb &&
+          <div
+            className={clsx(
+              // Match the page shell and centered main column so the thumb
+              // stays in the margin beside the form. Clip at the shell edge
+              // instead of unmounting while part of the thumb still fits.
+              'fixed z-10 inset-x-0 overflow-clip',
+              'pointer-events-none',
+              LAYOUT_CLASS_SHELL_X,
+            )}
+            style={{
+              top: FLOATING_THUMB_TOP_PX - FLOATING_THUMB_RISE_PX,
+              height: floatingThumbDimensions.height +
+                FLOATING_THUMB_RISE_PX + 2,
+              paddingTop: FLOATING_THUMB_RISE_PX,
+            }}
+          >
+            <div className={clsx(
+              'relative mx-auto w-full',
+              LAYOUT_CLASS_MAIN,
+            )}>
+              <div
+                className="absolute top-0"
+                style={{ left: FORM_MAX_WIDTH_PX + FORM_THUMB_GAP_PX }}
+              >
+                {thumbnail(false, clsx(
+                  'opacity-0 -translate-y-4',
+                  !isThumbnailVisible &&
+                    'opacity-100 translate-y-0 transition-all duration-300',
+                ), floatingThumbDimensions)}
+              </div>
+            </div>
+          </div>}
         <div className={clsx(
           'absolute top-2 left-2 transition-opacity duration-500',
           aiContent?.isLoading ? 'opacity-100' : 'opacity-0',
@@ -492,10 +667,7 @@ export default function PhotoForm({
         action={data => (type === 'create'
           ? createPhotoAction
           : updatePhotoAction
-        )(data)
-          .then(() => {
-            router.push(redirectParam ?? PATH_ADMIN_PHOTOS);
-          })
+        )(data, redirectParam ?? PATH_ADMIN_PHOTOS)
           .catch(e => {
             if (e.message !== 'NEXT_REDIRECT') {
               setFormActionErrorMessage(e.message);
@@ -526,6 +698,7 @@ export default function PhotoForm({
                   tagOptionsLimit,
                   tagOptionsLimitValidationMessage,
                   tagOptionsShouldParameterize,
+                  tagOptionsShouldRevealRawText,
                   readOnly,
                   hideModificationStatus,
                   validate,
@@ -539,7 +712,7 @@ export default function PhotoForm({
                   staticValue,
                 }]) => {
                   if (!isFieldHidden(key, hideIfEmpty, shouldHide)) {
-                    // eslint-disable-next-line max-len
+                    // eslint-disable-next-line @stylistic/max-len
                     const fieldProps: ComponentProps<typeof FieldsetWithStatus> = {
                       id: key,
                       label: label + (
@@ -556,12 +729,32 @@ export default function PhotoForm({
                         changedFormKeys.includes(key)
                       ),
                       onChange: value => {
-                        const formUpdated = { ...formData, [key]: value };
+                        let formUpdated = { ...formData, [key]: value };
+                        let syncedErrors: Partial<typeof formErrors> = {};
+                        if (key === 'takenAt' || key === 'takenAtNaive') {
+                          formUpdated = formDataWithSyncedTakenAt(
+                            formData,
+                            key,
+                            value,
+                            shouldSyncTakenAt ? takenAtOffsetMs : undefined,
+                          );
+                          setTakenAtOffsetMs(getTakenAtOffsetMsForForm(
+                            formUpdated,
+                            takenAtOffsetMs,
+                          ));
+                          const keySynced = key === 'takenAt'
+                            ? 'takenAtNaive'
+                            : 'takenAt';
+                          if (formUpdated[keySynced] !== formData[keySynced]) {
+                            syncedErrors = { [keySynced]: undefined };
+                          }
+                        }
                         setFormData(formUpdated);
                         if (validate) {
                           setFormErrors({
-                            ...formErrors, [key]:
-                            validate(value),
+                            ...formErrors,
+                            ...syncedErrors,
+                            [key]: validate(value),
                           });
                         } else if (validateStringMaxLength !== undefined) {
                           setFormErrors({
@@ -581,6 +774,7 @@ export default function PhotoForm({
                       tagOptionsLimit,
                       tagOptionsLimitValidationMessage,
                       tagOptionsShouldParameterize,
+                      tagOptionsShouldRevealRawText,
                       required,
                       readOnly,
                       spellCheck,
@@ -597,6 +791,42 @@ export default function PhotoForm({
                       footer: footerForField(key),
                     };
                     switch (key) {
+                      case 'locationPlace':
+                        return <PlaceInput
+                          key={key}
+                          initialPlace={initialPlace}
+                          setPlace={setPlace}
+                          setIsLoadingPlace={setIsLoadingPlace}
+                          className="relative z-1"
+                        />;
+                      case 'locationDisplayName':
+                        return <FieldsetWithStatus
+                          key={key}
+                          {...fieldProps}
+                          value={formData.locationDisplayName ?? ''}
+                          readOnly={isLoadingPlace}
+                          onChange={value => setFormData(data => {
+                            let location = data.location;
+                            try {
+                              const parsed = location
+                                ? JSON.parse(location) as Place
+                                : undefined;
+                              if (parsed) {
+                                location = JSON.stringify({
+                                  ...parsed,
+                                  nameFormatted: value,
+                                });
+                              }
+                            } catch {
+                              // Keep existing location JSON
+                            }
+                            return {
+                              ...data,
+                              locationDisplayName: value,
+                              location,
+                            };
+                          })}
+                        />;
                       case 'film':
                         return <FieldsetWithStatus
                           key={key}
@@ -607,17 +837,36 @@ export default function PhotoForm({
                             <PhotoFilmIcon />
                           </span>}
                         />;
-                      case 'applyRecipeTitleGlobally':
-                        return <ApplyRecipeTitleGloballyCheckbox
+                      case 'recipeTitle':
+                        return <FieldsetWithStatus
                           key={key}
                           {...fieldProps}
-                          photoId={initialPhotoForm.id}
+                          readOnly={fieldProps.readOnly ||
+                            isRecipeHashKey(formData.recipeTitle)}
+                          labelAccessory={(
+                            canCreateRecipeHashKey(formData.recipeData) ||
+                            isRecipeHashKey(formData.recipeTitle)
+                          ) && <RecipeTitleHashCheckbox
+                            recipeTitle={formData.recipeTitle}
+                            recipeData={formData.recipeData}
+                            onChange={recipeTitle => setFormData(data =>
+                              ({ ...data, recipeTitle }))}
+                          />}
+                          footer={<RecipeTitleRenameWarning
+                            photoId={initialPhotoForm.id}
+                            previousTitle={initialPhotoForm.recipeTitle}
+                            recipeTitle={formData.recipeTitle}
+                            recipeData={formData.recipeData}
+                            film={formData.film}
+                          />}
+                        />;
+                      case 'recipeData':
+                        return <FieldsetRecipeData
+                          key={key}
+                          {...fieldProps}
                           recipeTitle={formData.recipeTitle}
-                          hasRecipeTitleChanged={
-                            changedFormKeys.includes('recipeTitle')}
-                          recipeData={formData.recipeData}
-                          film={formData.film}
-                          onMatchResults={onMatchResults}
+                          didCopyRecipeData={didCopyRecipeData}
+                          onRecipeDataFound={onRecipeDataFound}
                         />;
                       case 'colorData':
                         return <FieldsetWithStatus
@@ -625,15 +874,51 @@ export default function PhotoForm({
                           {...fieldProps}
                           noteComplex={<PhotoColors
                             classNameDot="size-[13px]!"
-                            // eslint-disable-next-line max-len
+                            // eslint-disable-next-line @stylistic/max-len
                             colorData={generateColorDataFromString(formData.colorData)}
                           />}
+                          onChange={value => {
+                            const formUpdated = formDataWithUpdatedColorData(
+                              formData,
+                              value,
+                            );
+                            setFormData(formUpdated);
+                          }}
                         />;
+                      case 'keyColor': {
+                        const keyColorOklch =
+                          convertJsonStringToOklch(formData.keyColor) ??
+                          generateColorDataFromString(
+                            formData.colorData,
+                          )?.ai;
+                        return <FieldsetWithStatus
+                          key={key}
+                          {...fieldProps}
+                          noteComplex={keyColorOklch &&
+                            <ColorDot
+                              className="size-[13px]!"
+                              color={keyColorOklch}
+                            />}
+                          onChange={value => {
+                            const formUpdated = formDataWithUpdatedKeyColor(
+                              formData,
+                              value,
+                            );
+                            setFormData(formUpdated);
+                            if (validate) {
+                              setFormErrors({
+                                ...formErrors,
+                                [key]: validate(value),
+                              });
+                            }
+                          }}
+                        />;
+                      }
                       case 'tags':
                         return <FieldsetWithStatus
                           key={key}
                           {...fieldProps}
-                          className="relative z-2"
+                          className="relative z-3"
                         />;
                       case 'albums':
                         return <FieldsetAlbum
@@ -658,18 +943,45 @@ export default function PhotoForm({
                             initialPhotoForm,
                             formData,
                           )}
+                          className="relative z-2"
                         />;
                       case 'takenAt':
-                        return <FieldsetWithStatus
-                          key={key}
-                          {...fieldProps}
-                          accessory={<DateTimePicker
-                            value={formData.takenAt ?? ''}
-                            onChange={fieldProps.onChange}
-                            type="utc"
-                            readOnly={fieldProps.readOnly}
-                          />}
-                        />;
+                        return <Fragment key={key}>
+                          <label className={clsx(
+                            'flex items-center gap-2 select-none',
+                            canSyncTakenAt
+                              ? 'cursor-pointer'
+                              : 'cursor-not-allowed',
+                          )}>
+                            <Checkbox
+                              checked={canSyncTakenAt && shouldSyncTakenAt}
+                              disabled={!canSyncTakenAt}
+                              readOnly={!canSyncTakenAt}
+                              onChange={e =>
+                                setShouldSyncTakenAt(e.target.checked)}
+                            />
+                            <span className={clsx(
+                              !canSyncTakenAt && 'opacity-50',
+                            )}>
+                              Keep taken at fields in sync
+                            </span>
+                            {!canSyncTakenAt &&
+                              <span className={clsx(
+                                'text-gray-400 dark:text-gray-600',
+                              )}>
+                                (fields are inconsistent)
+                              </span>}
+                          </label>
+                          <FieldsetWithStatus
+                            {...fieldProps}
+                            accessory={<DateTimePicker
+                              value={formData.takenAt ?? ''}
+                              onChange={fieldProps.onChange}
+                              type="utc"
+                              readOnly={fieldProps.readOnly}
+                            />}
+                          />
+                        </Fragment>;
                       case 'takenAtNaive':
                         return <FieldsetWithStatus
                           key={key}

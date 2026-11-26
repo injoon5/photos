@@ -1,0 +1,72 @@
+/* eslint-disable @stylistic/max-len */
+
+import clsx from 'clsx/lite';
+
+const INTRINSIC_WIDTH = 32;
+const INTRINSIC_HEIGHT = 24;
+
+const CHROMATIC_DOT_OFFSET = 2;
+const CHROMATIC_DOT_SIZE = 8;
+const CHROMATIC_CLEAR_RING = 3;
+const CHROMATIC_DOT_CENTER =
+  CHROMATIC_DOT_OFFSET + CHROMATIC_DOT_SIZE / 2;
+const CHROMATIC_MASK_RADIUS =
+  CHROMATIC_DOT_SIZE / 2 + CHROMATIC_CLEAR_RING;
+const CHROMATIC_ICON_MASK =
+  `radial-gradient(circle ${CHROMATIC_MASK_RADIUS}px at ${CHROMATIC_DOT_CENTER}px ${CHROMATIC_DOT_CENTER}px, transparent 99%, #000 100%)`;
+
+export default function IconSortNav({
+  sort = 'desc',
+  width = INTRINSIC_WIDTH,
+  className,
+  chromatic,
+}: {
+  sort?: 'desc' | 'asc'
+  width?: number
+  className?: string
+  chromatic?: boolean
+}) {
+  return (
+    <span className="relative inline-flex">
+      <svg
+        width={width}
+        height={INTRINSIC_HEIGHT * width / INTRINSIC_WIDTH}
+        viewBox="0 0 32 24"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        className={clsx('shrink-0', className)}
+        style={chromatic
+          ? {
+            maskImage: CHROMATIC_ICON_MASK,
+            WebkitMaskImage: CHROMATIC_ICON_MASK,
+          }
+          : undefined}
+      >
+        {sort === 'asc'
+          ? <>
+            <path d="M22.4842 7.25C22.8983 7.25007 23.2342 7.58583 23.2342 8C23.2342 8.41417 22.8983 8.74993 22.4842 8.75H7.05547C6.64125 8.75 6.30547 8.41421 6.30547 8C6.30547 7.58579 6.64125 7.25 7.05547 7.25H22.4842Z" fill="currentColor" />
+            <path d="M17.9129 10.75C18.327 10.7502 18.6629 11.0859 18.6629 11.5C18.6629 11.9141 18.327 12.2498 17.9129 12.25H7.05547C6.64125 12.25 6.30547 11.9142 6.30547 11.5C6.30547 11.0858 6.64125 10.75 7.05547 10.75H17.9129Z" fill="currentColor" />
+            <path d="M14.4842 14.25C14.8983 14.2501 15.2342 14.5858 15.2342 15C15.2342 15.4142 14.8983 15.7499 14.4842 15.75H7.05547C6.64125 15.75 6.30547 15.4142 6.30547 15C6.30547 14.5858 6.64125 14.25 7.05547 14.25H14.4842Z" fill="currentColor" />
+            <path d="M22.5844 18.5L22.5844 13.6025L20.9623 15.1514C20.6027 15.4942 20.0329 15.4805 19.6898 15.1211C19.347 14.7615 19.3607 14.1917 19.7201 13.8486L22.8627 10.8486L22.9301 10.791C23.278 10.5185 23.7797 10.5374 24.1058 10.8486L27.2484 13.8486C27.6079 14.1918 27.6208 14.7615 27.2777 15.1211C26.9345 15.4806 26.3648 15.4945 26.0053 15.1514L24.3842 13.6035L24.3842 18.5C24.3842 18.9971 23.9808 19.4004 23.4838 19.4004C22.9868 19.4002 22.5844 18.997 22.5844 18.5Z" fill="currentColor" />
+          </>
+          : <>
+            <path d="M24.3283 11.5L24.3283 16.3975L25.9503 14.8486C26.3099 14.5058 26.8797 14.5195 27.2228 14.8789C27.5657 15.2385 27.552 15.8083 27.1925 16.1514L24.0499 19.1514L23.9826 19.209C23.6346 19.4815 23.1329 19.4626 22.8068 19.1514L19.6642 16.1514C19.3047 15.8082 19.2918 15.2385 19.6349 14.8789C19.9781 14.5194 20.5478 14.5055 20.9074 14.8486L22.5285 16.3965L22.5285 11.5C22.5285 11.0029 22.9318 10.5996 23.4289 10.5996C23.9258 10.5998 24.3283 11.003 24.3283 11.5Z" fill="currentColor" />
+            <path d="M22.4842 7.25C22.8983 7.25007 23.2342 7.58583 23.2342 8C23.2342 8.41417 22.8983 8.74993 22.4842 8.75H7.05547C6.64125 8.75 6.30547 8.41421 6.30547 8C6.30547 7.58579 6.64125 7.25 7.05547 7.25H22.4842Z" fill="currentColor" />
+            <path d="M17.9129 10.75C18.327 10.7502 18.6629 11.0859 18.6629 11.5C18.6629 11.9141 18.327 12.2498 17.9129 12.25H7.05547C6.64125 12.25 6.30547 11.9142 6.30547 11.5C6.30547 11.0858 6.64125 10.75 7.05547 10.75H17.9129Z" fill="currentColor" />
+            <path d="M14.4842 14.25C14.8983 14.2501 15.2342 14.5858 15.2342 15C15.2342 15.4142 14.8983 15.7499 14.4842 15.75H7.05547C6.64125 15.75 6.30547 15.4142 6.30547 15C6.30547 14.5858 6.64125 14.25 7.05547 14.25H14.4842Z" fill="currentColor" />
+          </>}
+      </svg>
+      {chromatic &&
+        <span
+          aria-hidden
+          className="absolute rounded-full bg-[conic-gradient(#f43f5e,#f59e0b,#eab308,#22c55e,#3b82f6,#a855f7,#f43f5e)]"
+          style={{
+            top: CHROMATIC_DOT_OFFSET,
+            left: CHROMATIC_DOT_OFFSET,
+            width: CHROMATIC_DOT_SIZE,
+            height: CHROMATIC_DOT_SIZE,
+          }}
+        />}
+    </span>
+  );
+}

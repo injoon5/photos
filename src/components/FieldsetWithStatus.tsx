@@ -28,10 +28,12 @@ export default function FieldsetWithStatus({
   className,
   selectOptions,
   selectOptionsDefaultLabel,
+  selectOpenOnLoad,
   tagOptions,
   tagOptionsLimit,
   tagOptionsLimitValidationMessage,
   tagOptionsShouldParameterize,
+  tagOptionsShouldRevealRawText,
   tagOptionsDefaultIcon,
   tagOptionsDefaultIconSelected,
   tagOptionsLabelOverride,
@@ -47,6 +49,7 @@ export default function FieldsetWithStatus({
   type = 'text',
   inputRef: inputRefProp,
   accessory,
+  labelAccessory,
   footer,
   hideLabel,
   tabIndex,
@@ -65,10 +68,12 @@ export default function FieldsetWithStatus({
   className?: string
   selectOptions?: SelectMenuOptionType[]
   selectOptionsDefaultLabel?: string
+  selectOpenOnLoad?: boolean
   tagOptions?: AnnotatedTag[]
   tagOptionsLimit?: number
   tagOptionsLimitValidationMessage?: string
   tagOptionsShouldParameterize?: boolean
+  tagOptionsShouldRevealRawText?: boolean
   tagOptionsDefaultIcon?: ReactNode
   tagOptionsDefaultIconSelected?: ReactNode
   tagOptionsLabelOverride?: (value: string) => string | undefined
@@ -84,6 +89,7 @@ export default function FieldsetWithStatus({
   type?: FieldSetType
   inputRef?: RefObject<HTMLInputElement | null>
   accessory?: ReactNode
+  labelAccessory?: ReactNode
   footer?: ReactNode
   hideLabel?: boolean
   tabIndex?: number
@@ -97,6 +103,8 @@ export default function FieldsetWithStatus({
   const { pending } = useFormStatus();
 
   const readOnly = readOnlyProp || pending || loading;
+
+  const errorId = error ? `${id}-error` : undefined;
 
   const inputProps: InputHTMLAttributes<HTMLInputElement> = {
     id,
@@ -117,6 +125,10 @@ export default function FieldsetWithStatus({
     disabled: type === 'checkbox' && (
       readOnly || pending || loading
     ),
+    required,
+    'aria-required': required,
+    'aria-invalid': Boolean(error),
+    'aria-describedby': errorId,
     className: clsx(
       (
         type === 'text' ||
@@ -138,17 +150,27 @@ export default function FieldsetWithStatus({
         // For managing checkbox active state
         'group',
         'space-y-1',
-        type === 'checkbox' && 'flex items-center gap-2',
+        type === 'checkbox' && clsx(
+          'flex items-center gap-2',
+          !readOnly && 'cursor-pointer',
+        ),
         className,
       )}>
-        {!hideLabel &&
+        {!hideLabel && <div className={clsx(
+          labelAccessory
+            ? 'flex flex-wrap items-center gap-x-3'
+            : 'contents',
+        )}>
           <label
             htmlFor={id}
             className={clsx(
               'inline-flex flex-wrap gap-x-2 items-center select-none',
-              type === 'checkbox' && 'order-2 m-0 translate-y-[0.25px]',
-              type === 'checkbox' && readOnly &&
-                'opacity-50 cursor-not-allowed',
+              type === 'checkbox' && clsx(
+                'order-2 m-0 translate-y-[0.25px]',
+                readOnly
+                  ? 'opacity-50 cursor-not-allowed'
+                  : 'cursor-pointer',
+              ),
             )}
           >
             <span className="inline-flex items-center gap-x-[5px]">
@@ -184,7 +206,7 @@ export default function FieldsetWithStatus({
                 *
               </span>}
             {error &&
-              <span className="text-error">
+              <span id={errorId} className="text-error">
                 {error}
               </span>}
             {required &&
@@ -195,18 +217,21 @@ export default function FieldsetWithStatus({
               <span className="translate-y-[1.5px]">
                 <Spinner />
               </span>}
-          </label>}
+          </label>
+          {labelAccessory}
+        </div>}
         <div className="flex gap-2">
           {selectOptions
             ? <SelectMenu
               id={id}
               name={id}
               tabIndex={tabIndex}
-              className="w-full"
+              className="w-full min-w-0"
               value={value}
               onChange={onChange}
               options={selectOptions}
               defaultOptionLabel={selectOptionsDefaultLabel}
+              openOnLoad={selectOpenOnLoad}
               error={error}
               readOnly={readOnly}
             />
@@ -229,6 +254,7 @@ export default function FieldsetWithStatus({
                 limitValidationMessage={tagOptionsLimitValidationMessage}
                 allowNewValues={tagOptionsAllowNewValues}
                 shouldParameterize={tagOptionsShouldParameterize}
+                shouldRevealRawText={tagOptionsShouldRevealRawText}
               />
               : type === 'textarea'
                 ? <textarea
@@ -240,6 +266,10 @@ export default function FieldsetWithStatus({
                   readOnly={readOnly}
                   spellCheck={spellCheck}
                   autoCapitalize={!capitalize ? 'off' : undefined}
+                  required={required}
+                  aria-required={required}
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={errorId}
                   className={clsx(
                     'w-full h-24 resize-none',
                     Boolean(error) && 'error',

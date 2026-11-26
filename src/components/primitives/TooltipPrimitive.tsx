@@ -1,6 +1,13 @@
 'use client';
 
-import { ReactNode, useRef, useState, ComponentProps } from 'react';
+import {
+  ReactNode,
+  useEffect,
+  useRef,
+  useState,
+  ComponentProps,
+  FocusEvent,
+} from 'react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import ComponentSurface from './surface/ComponentSurface';
 import clsx from 'clsx/lite';
@@ -8,6 +15,32 @@ import useClickInsideOutside from '@/utility/useClickInsideOutside';
 import KeyCommand from './KeyCommand';
 import { clearGlobalFocus } from '@/utility/dom';
 import { useAppState } from '@/app/AppState';
+
+// iOS Safari focuses a control after pointerup, including when a menu
+// closes onto a `triggerIsFocusable` child. Radix treats any focus that
+// isn't mid-pointerdown as keyboard focus and opens the tooltip instantly,
+// which flashes it. Only Tab / arrow focus should open it.
+let lastInteractionWasKeyboard = false;
+let inputModalityListenersBound = false;
+
+const bindInputModalityListeners = () => {
+  if (inputModalityListenersBound || typeof document === 'undefined') return;
+  inputModalityListenersBound = true;
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Tab' || event.key.startsWith('Arrow')) {
+      lastInteractionWasKeyboard = true;
+    }
+  }, true);
+  document.addEventListener('pointerdown', () => {
+    lastInteractionWasKeyboard = false;
+  }, true);
+};
+
+const preventTooltipOpenOnPointerFocus = (
+  event: FocusEvent<HTMLElement>,
+) => {
+  if (!lastInteractionWasKeyboard) event.preventDefault();
+};
 
 export default function TooltipPrimitive({
   content: contentProp,
@@ -18,6 +51,7 @@ export default function TooltipPrimitive({
   keyCommand,
   keyCommandModifier,
   supportMobile,
+  triggerIsFocusable,
   animateLarge,
   disableHoverableContent,
   delayDuration = 100,
@@ -35,6 +69,9 @@ export default function TooltipPrimitive({
   keyCommand?: string
   keyCommandModifier?: ComponentProps<typeof KeyCommand>['modifier']
   supportMobile?: boolean
+  // Set when `children` already contains a button or link, to avoid nesting
+  // interactive elements. Otherwise the trigger renders as a real button.
+  triggerIsFocusable?: boolean
   animateLarge?: boolean
   disableHoverableContent?: boolean
   // Tooltip.Provider
@@ -54,6 +91,10 @@ export default function TooltipPrimitive({
   const { supportsHover } = useAppState();
 
   const includeButton = supportMobile && supportsHover === false;
+
+  useEffect(() => {
+    bindInputModalityListeners();
+  }, []);
 
   useClickInsideOutside({
     htmlElements: [refTrigger, refContent],
@@ -83,13 +124,16 @@ export default function TooltipPrimitive({
         open={(includeButton ? isOpen : undefined) || debug}
         disableHoverableContent={disableHoverableContent}
       >
-        <Tooltip.Trigger asChild>
-          {includeButton
+        <Tooltip.Trigger
+          asChild
+          onFocus={preventTooltipOpenOnPointerFocus}
+        >
+          {!triggerIsFocusable
             ? <button
               ref={refTrigger}
               type="button"
               onClick={() => {
-                setIsOpen(!isOpen);
+                if (includeButton) { setIsOpen(!isOpen); }
                 // Blur after clicking to prevent keyboard focus being stuck
                 // when tooltip is combined with a button
                 clearGlobalFocus();
@@ -98,6 +142,11 @@ export default function TooltipPrimitive({
             >
               {children}
             </button>
+            // Non-interactive pass-through: `children` supplies the
+            // focusable element, this onClick only clears focus afterward
+            /* eslint-disable-next-line
+              jsx-a11y/no-static-element-interactions,
+              jsx-a11y/click-events-have-key-events */
             : <span
               className={classNameTrigger}
               onClick={clearGlobalFocus}
@@ -126,7 +175,10 @@ export default function TooltipPrimitive({
             )}
           >
             {content &&
-              <ComponentSurface {...{ color, className }}>
+              <ComponentSurface {...{
+                color,
+                className: clsx('rounded-lg', className),
+              }}>
                 {content}
               </ComponentSurface>}
           </Tooltip.Content>

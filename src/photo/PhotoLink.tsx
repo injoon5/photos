@@ -5,11 +5,13 @@ import { Photo, titleForPhoto } from '@/photo';
 import { PhotoSetCategory } from '@/category';
 import { AnimationConfig } from '../components/AnimateItems';
 import { useAppState } from '@/app/AppState';
+import { PHOTO_TITLE_SERIF } from '@/app/config';
 import { pathForPhoto } from '@/app/path';
 import { clsx } from 'clsx/lite';
 import LinkWithStatus from '@/components/LinkWithStatus';
 import Spinner from '@/components/Spinner';
 import LinkWithLoaderBackground from '@/components/LinkWithLoaderBackground';
+import PhotoHover from './PhotoHover';
 
 export default function PhotoLink({
   ref,
@@ -20,6 +22,8 @@ export default function PhotoLink({
   className,
   children: _children,
   loaderType = 'spinner',
+  showHover,
+  classNameHover = 'inline-flex max-w-full',
   ...categories
 }: {
   ref?: RefObject<HTMLAnchorElement | null>
@@ -30,6 +34,8 @@ export default function PhotoLink({
   className?: string
   children?: ReactNode
   loaderType?: 'spinner' | 'badge'
+  showHover?: boolean
+  classNameHover?: string
 } & PhotoSetCategory) {
   const { setNextPhotoAnimation } = useAppState();
 
@@ -40,42 +46,61 @@ export default function PhotoLink({
         ref,
         className,
         href: pathForPhoto({ photo, ...categories }),
-        onClick: () => {
-          if (nextPhotoAnimation) {
-            setNextPhotoAnimation?.(nextPhotoAnimation);
-          }
-        },
+        // Always set (or clear) so a stale prev/next animation can't leak
+        // into a plain thumbnail click and override its default scale-up
+        onClick: () => setNextPhotoAnimation?.(nextPhotoAnimation),
         scroll,
         prefetch,
       }
       : undefined;
 
   const children = photo
-    ? (_children ?? titleForPhoto(photo))
+    ? (_children ?? titleForPhoto(photo))// + '2 and more text goes here'
     : _children;
 
-  return (
-    photo && linkProps
-      ? loaderType === 'spinner'
-        ? <LinkWithStatus {...linkProps}>
-          {({ isLoading }) => <>
-            {children}
-            {isLoading && <>
-              &nbsp;<Spinner className="translate-y-[0.5px]" />
+  const link = photo && linkProps
+    ? loaderType === 'spinner'
+      ? <LinkWithStatus {...linkProps}>
+        {({ isLoading }) =>
+          PHOTO_TITLE_SERIF && isLoading
+            ? <span className={clsx(
+              'inline-flex items-start max-w-full gap-x-[0.3em]',
+            )}>
+              <span className="min-w-0">{children}</span>
+              {/* One line tall, so mark stays centered on first line */}
+              <span className="inline-flex h-[1lh] shrink-0 items-center">
+                <Spinner size="0.6em" />
+              </span>
+            </span>
+            : <>
+              {children}
+              {isLoading && <>
+                &nbsp;<Spinner className="translate-y-[0.5px]" />
+              </>}
             </>}
-          </>}
-        </LinkWithStatus>
-        : <LinkWithLoaderBackground
-          {...linkProps}
-          offsetPadding
-        >
-          {children}
-        </LinkWithLoaderBackground>
-      : <span className={clsx(
-        'text-gray-300 dark:text-gray-700 cursor-default',
-        className,
-      )}>
+      </LinkWithStatus>
+      : <LinkWithLoaderBackground
+        {...linkProps}
+        offsetPadding
+      >
         {children}
-      </span>
-  );
+      </LinkWithLoaderBackground>
+    : <span className={clsx(
+      className,
+      // Important so caller hover/text utilities (e.g. mobile icon buttons)
+      // can't repaint a non-interactive placeholder.
+      'text-gray-300! dark:text-gray-700! cursor-default',
+      'hover:bg-transparent! active:bg-transparent!',
+      'dark:hover:bg-transparent! dark:active:bg-transparent!',
+      'hover:text-gray-300! dark:hover:text-gray-700!',
+      'active:text-gray-300! dark:active:text-gray-700!',
+    )}>
+      {children}
+    </span>;
+
+  return photo && showHover
+    ? <PhotoHover photo={photo} className={classNameHover}>
+      {link}
+    </PhotoHover>
+    : link;
 };

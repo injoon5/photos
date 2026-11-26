@@ -14,6 +14,7 @@ export default function LoaderButton({
   ref,
   children,
   classNameIcon,
+  classNameContent,
   isLoading,
   icon,
   spinnerColor,
@@ -35,6 +36,7 @@ export default function LoaderButton({
 }: {
   ref?: RefObject<HTMLButtonElement | null>
   classNameIcon?: string
+  classNameContent?: string
   isLoading?: boolean
   icon?: ReactNode
   spinnerColor?: SpinnerColor
@@ -72,33 +74,40 @@ export default function LoaderButton({
         styleAs === 'link-without-hover' && 'hover:text-main',
         'inline-flex items-center gap-1.5 self-start whitespace-nowrap',
         primary && 'primary',
-        hideFocusOutline && 'focus:outline-hidden',
+        // Hide mouse-click focus ring, but keep one for keyboard navigation
+        hideFocusOutline && [
+          'focus:outline-hidden',
+          'focus-visible:outline-2',
+          'focus-visible:outline-blue-600',
+          'focus-visible:outline-offset-2',
+        ],
         className,
       )}
       disabled={isLoading || disabled}
     >
-      {(icon || isLoading) &&
+      {icon &&
         <span className={clsx(
-          'min-w-[1.25rem] max-h-5',
-          styleAs === 'button' ? 'translate-y-[-0.5px]' : 'translate-y-[0.5px]',
-          'inline-flex justify-center shrink-0',
+          'relative inline-flex items-center justify-center shrink-0',
+          // Fallback when caller doesn’t pass a fixed slot (e.g. MoreMenuItem)
+          !classNameIcon && 'min-w-[1.25rem] h-5',
+          styleAs === 'button' && 'translate-y-[-0.5px]',
           classNameIcon,
         )}>
-          {isLoading
-            ? <Spinner
-              size={14}
-              color={spinnerColor}
-              className={clsx(
-                'translate-y-[0.5px]',
-                spinnerClassName,
-              )}
-            />
-            : icon}
+          <span className={clsx(isLoading && 'invisible')}>{icon}</span>
+          {isLoading &&
+            <span className="absolute inset-0 flex items-center justify-center">
+              <Spinner
+                size={14}
+                color={spinnerColor}
+                className={spinnerClassName}
+              />
+            </span>}
         </span>}
       {children && <span className={clsx(
         styleAs !== 'button' && isLoading && 'text-dim',
-        hideText === 'on-mobile' && icon !== undefined && 'max-sm:hidden',
+        hideText === 'on-mobile' && Boolean(icon) && 'max-sm:hidden',
         hideText === 'always' && 'hidden',
+        classNameContent,
       )}>
         {children}
       </span>}
@@ -110,6 +119,7 @@ export default function LoaderButton({
         content={tooltip}
         color={tooltipColor}
         side={tooltipSide}
+        triggerIsFocusable
       >
         {button}
       </Tooltip>
